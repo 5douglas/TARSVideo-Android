@@ -254,7 +254,7 @@ jobs:
               title = "TARSVideo VLC"
               summary = "Player VLC integrado ao TARSVideo • Direct Play / Direct Stream"
           }
-'''
+          '''
           s = s[:begin] + fixed_video + s[end:]
           settings.write_text(s, encoding="utf-8")
 
@@ -279,40 +279,40 @@ jobs:
           foreground = upstream / "app/src/main/res/drawable/tars_icon_foreground.xml"
           foreground.write_text(
               '''<?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:width="72dp"
-        android:height="72dp"
-        android:gravity="center"
-        android:drawable="@drawable/tars_icon" />
-</layer-list>
-''',
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item
+                  android:width="72dp"
+                  android:height="72dp"
+                  android:gravity="center"
+                  android:drawable="@drawable/tars_icon" />
+          </layer-list>
+          ''',
               encoding="utf-8",
           )
 
           adaptive = upstream / "app/src/main/res/mipmap-anydpi-v26/tars_launcher.xml"
           adaptive.write_text(
               '''<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/tars_launcher_background" />
-    <foreground android:drawable="@drawable/tars_icon_foreground" />
-</adaptive-icon>
-''',
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/tars_launcher_background" />
+              <foreground android:drawable="@drawable/tars_icon_foreground" />
+          </adaptive-icon>
+          ''',
               encoding="utf-8",
           )
 
           legacy = upstream / "app/src/main/res/mipmap-anydpi/tars_launcher.xml"
           legacy.write_text(
               '''<?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@color/tars_launcher_background" />
-    <item
-        android:width="72dp"
-        android:height="72dp"
-        android:gravity="center"
-        android:drawable="@drawable/tars_icon" />
-</layer-list>
-''',
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@color/tars_launcher_background" />
+              <item
+                  android:width="72dp"
+                  android:height="72dp"
+                  android:gravity="center"
+                  android:drawable="@drawable/tars_icon" />
+          </layer-list>
+          ''',
               encoding="utf-8",
           )
 
