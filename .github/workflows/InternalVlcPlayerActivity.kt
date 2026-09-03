@@ -17,6 +17,7 @@ import org.jellyfin.mobile.utils.Constants
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
+import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.util.VLCVideoLayout
 
 class InternalVlcPlayerActivity : AppCompatActivity() {
@@ -157,9 +158,11 @@ class InternalVlcPlayerActivity : AppCompatActivity() {
             }
             ?.let { subtitle ->
                 media.addSlave(
-                    Media.Slave.Type.Subtitle,
-                    subtitle,
-                    true,
+                    IMedia.Slave(
+                        IMedia.Slave.Type.Subtitle,
+                        4,
+                        subtitle,
+                    )
                 )
             }
 
