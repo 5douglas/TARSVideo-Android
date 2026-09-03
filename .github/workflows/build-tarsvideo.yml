@@ -3,7 +3,8 @@ name: Build TARSVideo Android
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -35,29 +36,66 @@ jobs:
 
       - name: Apply TARSVideo patch
         run: |
-          cp InternalVlcPlayerActivity.kt \
+          set -e
+
+          echo "=== Arquivos TARSVideo ==="
+          ls -la
+
+          echo "=== Criando pasta do player VLC ==="
+          mkdir -p \
+            upstream/app/src/main/java/org/jellyfin/mobile/player/vlc
+
+          echo "=== Copiando InternalVlcPlayerActivity.kt ==="
+          cp ./InternalVlcPlayerActivity.kt \
             upstream/app/src/main/java/org/jellyfin/mobile/player/vlc/InternalVlcPlayerActivity.kt
 
-          python3 patch_tarsvideo.py upstream
+          echo "=== Aplicando patch TARSVideo ==="
+          python3 ./patch_tarsvideo.py upstream
+
+          echo "=== Patch aplicado com sucesso ==="
 
       - name: Build APK
         working-directory: upstream
-        run: ./gradlew assembleLibreDebug --stacktrace
+        run: |
+          set -e
+
+          chmod +x gradlew
+
+          ./gradlew \
+            assembleLibreDebug \
+            --stacktrace
 
       - name: Collect APK
         run: |
+          set -e
+
           mkdir -p dist
+
+          echo "=== Procurando APK gerado ==="
+
+          find upstream/app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print
 
           APK="$(find upstream/app/build/outputs/apk \
             -type f \
             -name "*.apk" \
-            | head -n1)"
+            | head -n 1)"
 
-          test -n "$APK"
+          if [ -z "$APK" ]; then
+            echo "ERRO: Nenhum APK encontrado."
+            exit 1
+          fi
 
-          cp "$APK" dist/TARSVideo-v0.1-debug.apk
+          echo "=== APK encontrado ==="
+          echo "$APK"
 
-          ls -lh dist/
+          cp "$APK" \
+            dist/TARSVideo-v0.1-debug.apk
+
+          echo "=== TARSVideo APK ==="
+          ls -lh dist/TARSVideo-v0.1-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
