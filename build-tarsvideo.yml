@@ -1,9 +1,10 @@
-name: Build TARSVideo Android
+name: Build TARSVideo Android v0.2
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -21,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jellyfin/jellyfin-android
-          ref: master
+          ref: f6c4e51aafe7d372d2f275398303037176478456
           path: upstream
 
       - name: Setup Java 21
@@ -33,36 +34,74 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Apply TARSVideo patch
+      - name: Apply TARSVideo v0.2 patch
         run: |
-          cp InternalVlcPlayerActivity.kt \
+          set -e
+
+          echo "=== Arquivos TARSVideo ==="
+          ls -la
+
+          echo "=== Criando diretórios ==="
+          mkdir -p \
+            upstream/app/src/main/java/org/jellyfin/mobile/player/vlc \
+            upstream/app/src/main/res/drawable-nodpi
+
+          echo "=== Copiando player LibVLC ==="
+          cp ./InternalVlcPlayerActivity.kt \
             upstream/app/src/main/java/org/jellyfin/mobile/player/vlc/InternalVlcPlayerActivity.kt
 
-          python3 patch_tarsvideo.py upstream
+          echo "=== Copiando ícone TARSVideo ==="
+          cp ./tars_icon.png \
+            upstream/app/src/main/res/drawable-nodpi/tars_icon.png
+
+          echo "=== Aplicando patch TARSVideo ==="
+          python3 ./patch_tarsvideo.py upstream
+
+          echo "=== Patch v0.2 concluído ==="
 
       - name: Build APK
         working-directory: upstream
-        run: ./gradlew assembleLibreDebug --stacktrace
+        run: |
+          set -e
+          chmod +x gradlew
+
+          ./gradlew \
+            assembleLibreDebug \
+            --stacktrace
 
       - name: Collect APK
         run: |
+          set -e
+
           mkdir -p dist
+
+          echo "=== APKs encontrados ==="
+
+          find upstream/app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print
 
           APK="$(find upstream/app/build/outputs/apk \
             -type f \
             -name "*.apk" \
-            | head -n1)"
+            | head -n 1)"
 
-          test -n "$APK"
+          if [ -z "$APK" ]; then
+            echo "Nenhum APK encontrado."
+            exit 1
+          fi
 
-          cp "$APK" dist/TARSVideo-v0.1-debug.apk
+          cp "$APK" \
+            dist/TARSVideo-v0.2-debug.apk
 
-          ls -lh dist/
+          ls -lh \
+            dist/TARSVideo-v0.2-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.1
-          path: dist/TARSVideo-v0.1-debug.apk
+          name: TARSVideo-Android-v0.2
+          path: dist/TARSVideo-v0.2-debug.apk
           retention-days: 14
           if-no-files-found: error
