@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.2
+name: Build TARSVideo Android v0.3 VLC UI
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
 
     steps:
       - name: Checkout TARSVideo
@@ -25,8 +25,16 @@ jobs:
           ref: f6c4e51aafe7d372d2f275398303037176478456
           path: upstream
 
+      - name: Checkout VLC Android 3.7.1
+        uses: actions/checkout@v4
+        with:
+          repository: videolan/vlc-android
+          ref: baeb1edae0678927ebe16d482d979e9c7e75ead6
+          path: vlc-android-source
+          fetch-depth: 1
+
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -34,74 +42,62 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Apply TARSVideo v0.2 patch
+      - name: Apply TARSVideo v0.3 patch
         run: |
           set -e
 
-          echo "=== Arquivos TARSVideo ==="
+          echo "=== TARSVideo files ==="
           ls -la
 
-          echo "=== Criando diretórios ==="
-          mkdir -p \
-            upstream/app/src/main/java/org/jellyfin/mobile/player/vlc \
-            upstream/app/src/main/res/drawable-nodpi
+          echo "=== Jellyfin commit ==="
+          git -C upstream rev-parse HEAD
 
-          echo "=== Copiando player LibVLC ==="
-          cp ./InternalVlcPlayerActivity.kt \
-            upstream/app/src/main/java/org/jellyfin/mobile/player/vlc/InternalVlcPlayerActivity.kt
+          echo "=== VLC Android commit/version ==="
+          git -C vlc-android-source rev-parse HEAD
+          grep -n "versionName" vlc-android-source/build.gradle | head
 
-          echo "=== Copiando ícone TARSVideo ==="
-          cp ./tars_icon.png \
-            upstream/app/src/main/res/drawable-nodpi/tars_icon.png
+          mkdir -p upstream/app/src/main/res/drawable-nodpi
+          cp ./tars_icon.png upstream/app/src/main/res/drawable-nodpi/tars_icon.png
 
-          echo "=== Aplicando patch TARSVideo ==="
           python3 ./patch_tarsvideo.py upstream
 
-          echo "=== Patch v0.2 concluído ==="
+          echo "=== TARSVideo v0.3 patch done ==="
+
+      - name: Verify embedded VLC dependency
+        working-directory: upstream
+        run: |
+          set -e
+          chmod +x gradlew
+          ./gradlew :app:dependencies --configuration libreDebugRuntimeClasspath > ../vlc-deps.txt
+          grep -n "org.videolan.tars:vlc-android\|libvlc-all\|medialibrary-all" ../vlc-deps.txt | head -40 || true
 
       - name: Build APK
         working-directory: upstream
         run: |
           set -e
           chmod +x gradlew
-
-          ./gradlew \
-            assembleLibreDebug \
-            --stacktrace
+          ./gradlew assembleLibreDebug --stacktrace
 
       - name: Collect APK
         run: |
           set -e
-
           mkdir -p dist
 
-          echo "=== APKs encontrados ==="
+          find upstream/app/build/outputs/apk -type f -name "*.apk" -print
 
-          find upstream/app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            -print
-
-          APK="$(find upstream/app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            | head -n 1)"
-
+          APK="$(find upstream/app/build/outputs/apk -type f -name "*.apk" | head -n 1)"
           if [ -z "$APK" ]; then
-            echo "Nenhum APK encontrado."
+            echo "No APK found"
             exit 1
           fi
 
-          cp "$APK" \
-            dist/TARSVideo-v0.2-debug.apk
-
-          ls -lh \
-            dist/TARSVideo-v0.2-debug.apk
+          cp "$APK" dist/TARSVideo-v0.3-VLC-debug.apk
+          ls -lh dist/TARSVideo-v0.3-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.2
-          path: dist/TARSVideo-v0.2-debug.apk
+          name: TARSVideo-Android-v0.3-VLC
+          path: dist/TARSVideo-v0.3-VLC-debug.apk
           retention-days: 14
           if-no-files-found: error
