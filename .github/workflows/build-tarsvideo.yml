@@ -191,6 +191,38 @@ jobs:
 
           echo "=== TARSVideo v0.3 patch done ==="
 
+      - name: Resolve Jellyfin VLC manifest conflicts
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("upstream/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text(encoding="utf-8")
+
+          targets = [
+              'android:name="com.google.android.gms.car.notification.SmallIcon"',
+              'android:name="androidx.car.app.TintableAttributionIcon"',
+          ]
+
+          for target in targets:
+              pos = text.find(target)
+              if pos == -1:
+                  raise SystemExit(f"Manifest metadata not found: {target}")
+
+              end = text.find("/>", pos)
+              if end == -1:
+                  raise SystemExit(f"Manifest metadata end not found: {target}")
+
+              block = text[pos:end]
+              if 'tools:replace="android:resource"' not in block:
+                  text = text[:end] + '\n            tools:replace="android:resource"' + text[end:]
+
+          manifest.write_text(text, encoding="utf-8")
+          print("Jellyfin/VLC car metadata conflicts resolved")
+          PY
+
       - name: Verify embedded VLC dependency
         working-directory: upstream
         run: |
