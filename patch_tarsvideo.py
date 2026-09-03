@@ -19,9 +19,9 @@ def replace_once(relative_path, old, new):
     )
 
 
-# ---------------------------------------------------------
+# ---------------------------------------------------------------------
 # Branding
-# ---------------------------------------------------------
+# ---------------------------------------------------------------------
 
 replace_once(
     "app/src/main/res/values/strings_donottranslate.xml",
@@ -42,15 +42,13 @@ replace_once(
 )
 
 
-# ---------------------------------------------------------
-# app/build.gradle.kts
-# ---------------------------------------------------------
+# ---------------------------------------------------------------------
+# Gradle: package, LibVLC, native-lib conflict, APK name
+# ---------------------------------------------------------------------
 
 gradle_path = root / "app/build.gradle.kts"
 gradle_text = gradle_path.read_text(encoding="utf-8")
 
-
-# Custom package ID
 old_default_config = """    defaultConfig {
         minSdk"""
 
@@ -59,9 +57,7 @@ new_default_config = """    defaultConfig {
         minSdk"""
 
 if old_default_config not in gradle_text:
-    raise SystemExit(
-        "defaultConfig pattern not found"
-    )
+    raise SystemExit("defaultConfig pattern not found")
 
 gradle_text = gradle_text.replace(
     old_default_config,
@@ -69,17 +65,13 @@ gradle_text = gradle_text.replace(
     1,
 )
 
-
-# LibVLC dependency
 old_libass = """    implementation(libs.libass.media)"""
 
 new_libass = """    implementation(libs.libass.media)
     implementation("org.videolan.android:libvlc-all:3.7.5")"""
 
 if old_libass not in gradle_text:
-    raise SystemExit(
-        "libass dependency pattern not found"
-    )
+    raise SystemExit("libass dependency pattern not found")
 
 gradle_text = gradle_text.replace(
     old_libass,
@@ -87,8 +79,6 @@ gradle_text = gradle_text.replace(
     1,
 )
 
-
-# Resolve duplicate libc++_shared.so
 old_build_features = """    buildFeatures {
         buildConfig = true
         viewBinding = true
@@ -112,9 +102,7 @@ new_build_features = """    buildFeatures {
     compileOptions {"""
 
 if old_build_features not in gradle_text:
-    raise SystemExit(
-        "buildFeatures pattern not found"
-    )
+    raise SystemExit("buildFeatures pattern not found")
 
 gradle_text = gradle_text.replace(
     old_build_features,
@@ -122,8 +110,6 @@ gradle_text = gradle_text.replace(
     1,
 )
 
-
-# APK name
 old_archive_name = (
     'base.archivesName.set('
     '"jellyfin-android-v${project.getVersionName()}"'
@@ -137,9 +123,7 @@ new_archive_name = (
 )
 
 if old_archive_name not in gradle_text:
-    raise SystemExit(
-        "archive name pattern not found"
-    )
+    raise SystemExit("archive name pattern not found")
 
 gradle_text = gradle_text.replace(
     old_archive_name,
@@ -153,9 +137,9 @@ gradle_path.write_text(
 )
 
 
-# ---------------------------------------------------------
-# Default player = embedded VLC bridge
-# ---------------------------------------------------------
+# ---------------------------------------------------------------------
+# Default player = internal VLC bridge
+# ---------------------------------------------------------------------
 
 preferences_path = (
     root
@@ -195,10 +179,6 @@ preferences_path.write_text(
 )
 
 
-# ---------------------------------------------------------
-# Settings default selection
-# ---------------------------------------------------------
-
 settings_path = (
     root
     / "app/src/main/java/org/jellyfin/mobile/settings/SettingsFragment.kt"
@@ -224,10 +204,10 @@ settings_path.write_text(
 )
 
 
-# ---------------------------------------------------------
-# Redirect Jellyfin external-player bridge
-# to our embedded VLC activity
-# ---------------------------------------------------------
+# ---------------------------------------------------------------------
+# Redirect Jellyfin external player bridge to embedded VLC.
+# Also pass Jellyfin item ID so the player can search remote subtitles.
+# ---------------------------------------------------------------------
 
 external_path = (
     root
@@ -268,14 +248,19 @@ old_intent = """val playerIntent = Intent(Intent.ACTION_VIEW).apply {
             if (context.packageManager.isPackageInstalled(appPreferences.externalPlayerApp)) {
                 component = getComponent(appPreferences.externalPlayerApp)
             }
-            setDataAndType(url.toUri(), "video/*")"""
+            setDataAndType(url.toUri(), "video/*")
+            putExtra("title", source.getName(context))
+            putExtra("position", source.startTime.inWholeMilliseconds.toInt())"""
 
 new_intent = """val playerIntent = Intent(
             context,
             InternalVlcPlayerActivity::class.java
         ).apply {
-            setDataAndType(url.toUri(), "video/*")"""
-
+            setDataAndType(url.toUri(), "video/*")
+            putExtra("title", source.getName(context))
+            putExtra("item_id", source.itemId.toString())
+            putExtra("media_source_id", source.id)
+            putExtra("position", source.startTime.inWholeMilliseconds.toInt())"""
 
 if old_intent not in external:
     raise SystemExit(
@@ -294,9 +279,74 @@ external_path.write_text(
 )
 
 
-# ---------------------------------------------------------
-# Register internal VLC Activity
-# ---------------------------------------------------------
+# ---------------------------------------------------------------------
+# Skip server selection: fixed TARSVideo server.
+# Clean installs go directly to this server.
+# ---------------------------------------------------------------------
+
+connect_path = (
+    root
+    / "app/src/main/java/org/jellyfin/mobile/ui/screens/connect/ConnectScreen.kt"
+)
+
+connect = connect_path.read_text(
+    encoding="utf-8"
+)
+
+old_connect_body = """    Surface(color = MaterialTheme.colors.background) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .padding(horizontal = 16.dp),
+        ) {
+            LogoHeader()
+            ServerSelection(
+                showExternalConnectionError = showExternalConnectionError,
+                onConnected = { hostname ->
+                    mainViewModel.switchServer(hostname)
+                },
+            )
+            StyledTextButton(
+                onClick = { activityEventHandler.emit(ActivityEvent.OpenDownloads) },
+                text = stringResource(R.string.view_downloads),
+            )
+        }
+    }"""
+
+new_connect_body = """    androidx.compose.runtime.LaunchedEffect(Unit) {
+        mainViewModel.switchServer("https://video.douglas.seg.br")
+    }
+
+    Surface(color = MaterialTheme.colors.background) {
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) {
+            androidx.compose.material.CircularProgressIndicator()
+        }
+    }"""
+
+if old_connect_body not in connect:
+    raise SystemExit(
+        "ConnectScreen body pattern not found"
+    )
+
+connect = connect.replace(
+    old_connect_body,
+    new_connect_body,
+    1,
+)
+
+connect_path.write_text(
+    connect,
+    encoding="utf-8",
+)
+
+
+# ---------------------------------------------------------------------
+# App icon + splash
+# ---------------------------------------------------------------------
 
 manifest_path = (
     root
@@ -307,6 +357,20 @@ manifest = manifest_path.read_text(
     encoding="utf-8"
 )
 
+manifest = manifest.replace(
+    'android:icon="@mipmap/ic_launcher"',
+    'android:icon="@drawable/tars_icon"',
+    1,
+)
+
+manifest = manifest.replace(
+    'android:roundIcon="@mipmap/ic_launcher_round"',
+    'android:roundIcon="@drawable/tars_icon"',
+    1,
+)
+
+
+# Register internal VLC Activity
 activity_marker = (
     '        <activity\n'
     '            android:name=".MainActivity"'
@@ -318,6 +382,7 @@ vlc_activity = (
     '            android:configChanges="orientation|screenSize|keyboardHidden"\n'
     '            android:exported="false"\n'
     '            android:screenOrientation="sensorLandscape"\n'
+    '            android:supportsPictureInPicture="true"\n'
     '            android:theme="@style/Theme.AppCompat.NoActionBar" />\n\n'
     '        <activity\n'
     '            android:name=".MainActivity"'
@@ -341,6 +406,34 @@ manifest_path.write_text(
 )
 
 
+styles_path = (
+    root
+    / "app/src/main/res/values/styles.xml"
+)
+
+styles = styles_path.read_text(
+    encoding="utf-8"
+)
+
+if (
+    '<item name="windowSplashScreenAnimatedIcon">'
+    '@drawable/ic_splash</item>'
+    in styles
+):
+    styles = styles.replace(
+        '<item name="windowSplashScreenAnimatedIcon">'
+        '@drawable/ic_splash</item>',
+        '<item name="windowSplashScreenAnimatedIcon">'
+        '@drawable/tars_icon</item>',
+        1,
+    )
+
+styles_path.write_text(
+    styles,
+    encoding="utf-8",
+)
+
+
 print(
-    "TARSVideo patch applied successfully"
+    "TARSVideo v0.2 patch applied successfully"
 )
