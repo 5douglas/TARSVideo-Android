@@ -39,7 +39,7 @@ replace_once(
 )
 
 
-# Custom package id
+# Custom package ID
 replace_once(
     "app/build.gradle.kts",
     """defaultConfig {
@@ -67,20 +67,44 @@ replace_once(
 )
 
 
-# Default player = internal VLC bridge
-replace_once(
-    "app/src/main/java/org/jellyfin/mobile/app/AppPreferences.kt",
-    """get() = sharedPreferences.getString(
-            Constants.PREF_VIDEO_PLAYER_TYPE,
-            VideoPlayerType.EXO_PLAYER
-        )!!""",
-    """get() = sharedPreferences.getString(
-            Constants.PREF_VIDEO_PLAYER_TYPE,
-            VideoPlayerType.EXTERNAL_PLAYER
-        )!!""",
+# Default video player
+preferences_path = (
+    root
+    / "app/src/main/java/org/jellyfin/mobile/app/AppPreferences.kt"
+)
+
+preferences_text = preferences_path.read_text(encoding="utf-8")
+
+old_preference = (
+    "get() = sharedPreferences.getString("
+    "Constants.PREF_VIDEO_PLAYER_TYPE, "
+    "VideoPlayerType.EXO_PLAYER)!!"
+)
+
+new_preference = (
+    "get() = sharedPreferences.getString("
+    "Constants.PREF_VIDEO_PLAYER_TYPE, "
+    "VideoPlayerType.EXTERNAL_PLAYER)!!"
+)
+
+if old_preference not in preferences_text:
+    raise SystemExit(
+        "Video player preference pattern not found"
+    )
+
+preferences_text = preferences_text.replace(
+    old_preference,
+    new_preference,
+    1,
+)
+
+preferences_path.write_text(
+    preferences_text,
+    encoding="utf-8",
 )
 
 
+# Settings default selection
 settings_path = (
     root
     / "app/src/main/java/org/jellyfin/mobile/settings/SettingsFragment.kt"
@@ -101,7 +125,7 @@ settings_path.write_text(
 )
 
 
-# Redirect Jellyfin external-player bridge to our embedded activity
+# Redirect external-player bridge to embedded VLC Activity
 external_path = (
     root
     / "app/src/main/java/org/jellyfin/mobile/bridge/ExternalPlayer.kt"
@@ -118,9 +142,11 @@ new_import = (
     "import org.jellyfin.mobile.player.vlc.InternalVlcPlayerActivity\n"
 )
 
-if "InternalVlcPlayerActivity" not in external:
+if "import org.jellyfin.mobile.player.vlc.InternalVlcPlayerActivity" not in external:
     if import_anchor not in external:
-        raise SystemExit("ExternalPlayer import anchor not found")
+        raise SystemExit(
+            "ExternalPlayer import anchor not found"
+        )
 
     external = external.replace(
         import_anchor,
@@ -159,7 +185,7 @@ external_path.write_text(
 )
 
 
-# Register internal LibVLC activity
+# Register internal VLC Activity in AndroidManifest
 manifest_path = (
     root
     / "app/src/main/AndroidManifest.xml"
@@ -169,19 +195,21 @@ manifest = manifest_path.read_text(
     encoding="utf-8"
 )
 
-activity_marker = """        <activity
-            android:name=".MainActivity\""""
+activity_marker = (
+    '        <activity\n'
+    '            android:name=".MainActivity"'
+)
 
-vlc_activity = """        <activity
-            android:name=".player.vlc.InternalVlcPlayerActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:exported="false"
-            android:screenOrientation="sensorLandscape"
-            android:theme="@style/Theme.AppCompat.NoActionBar" />
-
-        <activity
-            android:name=".MainActivity\""""
-
+vlc_activity = (
+    '        <activity\n'
+    '            android:name=".player.vlc.InternalVlcPlayerActivity"\n'
+    '            android:configChanges="orientation|screenSize|keyboardHidden"\n'
+    '            android:exported="false"\n'
+    '            android:screenOrientation="sensorLandscape"\n'
+    '            android:theme="@style/Theme.AppCompat.NoActionBar" />\n\n'
+    '        <activity\n'
+    '            android:name=".MainActivity"'
+)
 
 if "InternalVlcPlayerActivity" not in manifest:
     if activity_marker not in manifest:
