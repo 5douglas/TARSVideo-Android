@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.3.4.9.1 VLC UI
+name: Build TARSVideo Android v0.3.4.9.2 VLC UI
 
 on:
   workflow_dispatch:
@@ -38,6 +38,7 @@ jobs:
       - name: Prepare VLC source
         run: |
           set -e
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -45,25 +46,43 @@ jobs:
 
           settings = root / "settings.gradle"
           s = settings.read_text(encoding="utf-8")
+
           old = 'id("com.android.settings") version \'9.1.1\''
           new = 'id("com.android.settings") version \'9.4.0\''
+
           if old not in s:
-              raise SystemExit("VLC settings.gradle AGP pattern not found")
+              raise SystemExit(
+                  "VLC settings.gradle AGP pattern not found"
+              )
+
           s = s.replace(old, new, 1)
 
           old = "include ':libvlcjni:libvlc', ':medialibrary'"
+
           if old not in s:
-              raise SystemExit("VLC libvlc include pattern not found")
+              raise SystemExit(
+                  "VLC libvlc include pattern not found"
+              )
+
           settings.write_text(
-              s.replace(old, "include ':medialibrary'", 1),
+              s.replace(
+                  old,
+                  "include ':medialibrary'",
+                  1,
+              ),
               encoding="utf-8",
           )
 
           top = root / "build.gradle"
           s = top.read_text(encoding="utf-8")
+
           old = "ext.android_plugin_version = '9.1.1'"
+
           if old not in s:
-              raise SystemExit("VLC root AGP pattern not found")
+              raise SystemExit(
+                  "VLC root AGP pattern not found"
+              )
+
           top.write_text(
               s.replace(
                   old,
@@ -167,11 +186,12 @@ jobs:
           upstream = Path("upstream")
           vlc = Path("vlc-android-source")
 
-          # ------------------------------------------------------------
-          # Jellyfin app build/runtime
-          # ------------------------------------------------------------
+          # ============================================================
+          # Jellyfin Data Binding
+          # ============================================================
 
           app_gradle = upstream / "app/build.gradle.kts"
+
           s = app_gradle.read_text(
               encoding="utf-8"
           )
@@ -200,6 +220,10 @@ jobs:
               ),
               encoding="utf-8",
           )
+
+          # ============================================================
+          # Gradle memory
+          # ============================================================
 
           gradle_props = upstream / "gradle.properties"
 
@@ -235,9 +259,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
+          # ============================================================
           # OpenSubtitles API key
-          # ------------------------------------------------------------
+          # ============================================================
 
           os_service = (
               vlc
@@ -291,9 +315,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
-          # OpenSubtitles crash guard + HTTP error
-          # ------------------------------------------------------------
+          # ============================================================
+          # OpenSubtitles crash guard + HTTP diagnosis
+          # ============================================================
 
           sub_dialog = (
               vlc
@@ -381,6 +405,7 @@ jobs:
                             subtitleEvent.item,
                             true
                         )
+
                     } catch (e: Exception) {
                         Log.w(
                             "SubtitleDownload",
@@ -428,11 +453,13 @@ jobs:
                                                 " "
                                             )
                                             ?.take(260)
+
                                     } catch (
                                         _: Exception
                                     ) {
                                         null
                                     }
+
                                 } else {
                                     null
                                 }
@@ -452,20 +479,24 @@ jobs:
                                         "HTTP 406: download recusado ou limite atingido. Entre na sua conta do OpenSubtitles e tente novamente."
                                     }
 
-                                    http?.code() ==
-                                        406 -> {
+                                    http?.code() == 406 -> {
+                                        val reason =
+                                            errorBody
+                                                ?: "download recusado pelo OpenSubtitles"
 
-                                        "HTTP 406: ${errorBody ?: "download recusado pelo OpenSubtitles"}"
+                                        "HTTP 406: $reason"
                                     }
 
-                                    http?.code() ==
-                                        429 -> {
-
+                                    http?.code() == 429 -> {
                                         "HTTP 429: limite temporário do OpenSubtitles. Aguarde e tente novamente."
                                     }
 
                                     http != null -> {
-                                        "HTTP ${http.code()}: ${errorBody ?: http.message()}"
+                                        val reason =
+                                            errorBody
+                                                ?: http.message()
+
+                                        "HTTP ${http.code()}: $reason"
                                     }
 
                                     else -> {
@@ -489,8 +520,11 @@ jobs:
                     }
                 }'''
 
+          # IMPORTANT:
+          # use a lambda replacement so Python regex does NOT interpret
+          # backslash sequences such as \n inside the Kotlin source.
           s, count = download_pattern.subn(
-              new_download,
+              lambda _match: new_download,
               s,
               count=1,
           )
@@ -507,9 +541,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
+          # ============================================================
           # Jellyfin -> VLC StartActivity
-          # ------------------------------------------------------------
+          # ============================================================
 
           ext = (
               upstream
@@ -551,9 +585,9 @@ jobs:
               1,
           )
 
-          # ------------------------------------------------------------
-          # Tracking/result from embedded VLC
-          # ------------------------------------------------------------
+          # ============================================================
+          # VLC playback tracking
+          # ============================================================
 
           old = (
               "        when "
@@ -636,13 +670,9 @@ jobs:
                   1,
               )
 
-          # ------------------------------------------------------------
-          # Jellyfin external/sidecar subtitles
-          #
-          # REGEX deliberately used here.
-          # v0.3.4.9 failed because it tried to match
-          # this whole block with exact whitespace.
-          # ------------------------------------------------------------
+          # ============================================================
+          # Authenticated Jellyfin external subtitles
+          # ============================================================
 
           subtitle_handoff_pattern = re.compile(
               r'''(?ms)^            val externalSubs = source\.externalSubtitleStreams\n.*?^            if \(enabledSubUrl != null\) putExtra\("subtitles_location", enabledSubUrl\)$'''
@@ -721,6 +751,7 @@ jobs:
                     arrayOf(
                         url.toUri()
                     )
+
                 } ?: emptyArray()
             )
 
@@ -735,7 +766,7 @@ jobs:
 
           s, count = (
               subtitle_handoff_pattern.subn(
-                  subtitle_handoff,
+                  lambda _match: subtitle_handoff,
                   s,
                   count=1,
               )
@@ -753,10 +784,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
-          # VLC StartActivity:
-          # allow HTTP/HTTPS Jellyfin stream
-          # ------------------------------------------------------------
+          # ============================================================
+          # VLC StartActivity: allow Jellyfin HTTP/HTTPS URLs
+          # ============================================================
 
           start = (
               vlc
@@ -794,10 +824,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
-          # VLC:
-          # register ALL external Jellyfin subtitles
-          # ------------------------------------------------------------
+          # ============================================================
+          # VLC: register all Jellyfin external subtitle tracks
+          # ============================================================
 
           video_activity = (
               vlc
@@ -847,7 +876,7 @@ jobs:
 
           s, count = (
               vlc_sub_pattern.subn(
-                  vlc_sub_replacement,
+                  lambda _match: vlc_sub_replacement,
                   s,
                   count=1,
               )
@@ -865,9 +894,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
-          # Complete VLC runtime initialization
-          # ------------------------------------------------------------
+          # ============================================================
+          # VLC runtime initialization
+          # ============================================================
 
           app = (
               upstream
@@ -958,9 +987,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
-          # Remove VLC secondary launcher icon
-          # ------------------------------------------------------------
+          # ============================================================
+          # Remove VLC duplicate launcher icon
+          # ============================================================
 
           manifest = (
               vlc
@@ -1027,9 +1056,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
-          # Force VLC for existing installations
-          # ------------------------------------------------------------
+          # ============================================================
+          # Force embedded VLC player
+          # ============================================================
 
           prefs = (
               upstream
@@ -1063,9 +1092,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
-          # Fixed player settings
-          # ------------------------------------------------------------
+          # ============================================================
+          # Player settings UI
+          # ============================================================
 
           settings_file = (
               upstream
@@ -1114,9 +1143,9 @@ jobs:
               encoding="utf-8",
           )
 
-          # ------------------------------------------------------------
-          # Better launcher icon sizing
-          # ------------------------------------------------------------
+          # ============================================================
+          # Better Android launcher icon safe area
+          # ============================================================
 
           foreground = (
               upstream
@@ -1128,10 +1157,10 @@ jobs:
               '''<?xml version="1.0" encoding="utf-8"?>
           <inset xmlns:android="http://schemas.android.com/apk/res/android"
               android:drawable="@drawable/tars_launcher_art"
-              android:insetLeft="20dp"
-              android:insetTop="20dp"
-              android:insetRight="20dp"
-              android:insetBottom="20dp" />
+              android:insetLeft="24dp"
+              android:insetTop="24dp"
+              android:insetRight="24dp"
+              android:insetBottom="24dp" />
           ''',
               encoding="utf-8",
           )
@@ -1213,7 +1242,7 @@ jobs:
           )
 
           print(
-              "TARSVideo v0.3.4.9.1 "
+              "TARSVideo v0.3.4.9.2 "
               "patches applied"
           )
           PY
@@ -1336,15 +1365,15 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.3.4.9.1-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.9.2-VLC-debug.apk
 
           ls -lh \
-            dist/TARSVideo-v0.3.4.9.1-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.9.2-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.3.4.9.1-VLC
-          path: dist/TARSVideo-v0.3.4.9.1-VLC-debug.apk
+          name: TARSVideo-Android-v0.3.4.9.2-VLC
+          path: dist/TARSVideo-v0.3.4.9.2-VLC-debug.apk
           retention-days: 14
           if-no-files-found: error
