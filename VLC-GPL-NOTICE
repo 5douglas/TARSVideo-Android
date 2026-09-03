@@ -1,0 +1,14 @@
+TARSVideo v0.3 - VLC Android integration notice
+
+This experimental build integrates the official VLC Android player UI from:
+https://github.com/videolan/vlc-android
+
+Pinned source commit:
+baeb1edae0678927ebe16d482d979e9c7e75ead6
+Version at that commit: VLC Android 3.7.1
+
+The VLC Android application code is GPL-licensed. If TARSVideo is redistributed
+with this code, keep the applicable VLC/VideoLAN copyright and license notices
+and comply with the corresponding source-code obligations.
+
+This notice is informational for the TARSVideo test repository.
