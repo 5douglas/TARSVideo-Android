@@ -1,31 +1,13 @@
-TARSVideo Android v0.3 - official VLC Android player UI
+TARSVideo v0.3.4.4
 
-WHAT CHANGES
-- Replaces the handmade InternalVlcPlayerActivity with the official VLC Android VideoPlayerActivity.
-- Pins VLC Android stable 3.7.1 source.
-- Uses VLC's own player interface and VLC's own OpenSubtitles flow.
-- Keeps Jellyfin responsible for catalog/login/history and sends the Direct Play URL to VLC.
-- Keeps the standard VLC result extras so Jellyfin can receive position/duration.
-- Removes MultiServer capability from the embedded Jellyfin web shell.
-- Keeps the server fixed at https://video.douglas.seg.br.
-- Hides the native change-server fallback.
-- Masks the Jellyfin web loading logo with the TARSVideo logo.
-- Uses an adaptive/padded TARSVideo launcher icon.
+Substitua somente:
+1. .github/workflows/build-tarsvideo.yml
+   pelo arquivo build-tarsvideo-v0.3.4.4.yml
+2. tars_icon.png na raiz
+   pelo arquivo tars_icon.png deste kit.
 
-FILES TO REPLACE
-1. Root: patch_tarsvideo.py
-2. .github/workflows/build-tarsvideo.yml:
-   replace its entire contents with build-tarsvideo.yml from this kit.
-
-KEEP
-- tars_icon.png in the repository root.
-
-NO LONGER USED
-- InternalVlcPlayerActivity.kt is no longer used by the v0.3 workflow.
-  You may leave it in the repository for now; it will not be compiled.
-
-EXPECTED FIRST BUILD
-This is a larger integration than v0.2 because the complete VLC Android player
-library and its resources are compiled together with Jellyfin. The first CI run
-may expose Gradle/resource/manifest compatibility issues. Those should be fixed
-from the GitHub Actions log without returning to the handmade player.
+Correções:
+- ativa Android Data Binding no APK principal;
+- corrige o crash do overlay oficial do VLC ao tocar na tela;
+- mantém VLC oficial integrado;
+- ícone 512x512 com margem transparente real para não sair da máscara do Android.
