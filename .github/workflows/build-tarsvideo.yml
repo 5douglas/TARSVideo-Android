@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.3.4.3 VLC UI
+name: Build TARSVideo Android v0.3.4.4 VLC UI
 
 on:
   workflow_dispatch:
@@ -201,6 +201,15 @@ jobs:
           upstream = Path("upstream")
           vlc = Path("vlc-android-source")
 
+          # VLC overlay requires Android Data Binding generated mapper.
+          app_gradle = upstream / "app/build.gradle.kts"
+          s = app_gradle.read_text(encoding="utf-8")
+          old_features = "    buildFeatures {\n        buildConfig = true\n        viewBinding = true\n        compose = true\n    }"
+          new_features = "    buildFeatures {\n        buildConfig = true\n        viewBinding = true\n        dataBinding = true\n        compose = true\n    }"
+          if old_features not in s:
+              raise SystemExit("Jellyfin buildFeatures block not found for dataBinding fix")
+          app_gradle.write_text(s.replace(old_features, new_features, 1), encoding="utf-8")
+
           # 1) Use VLC's official StartActivity bridge instead of launching
           # VideoPlayerActivity directly.
           ext = upstream / "app/src/main/java/org/jellyfin/mobile/bridge/ExternalPlayer.kt"
@@ -366,10 +375,10 @@ jobs:
           )
           web_layout.write_text(s, encoding="utf-8")
 
-          print("TARSVideo v0.3.4.3 fixes applied")
+          print("TARSVideo v0.3.4.4 fixes applied")
           PY
 
-          echo "=== TARSVideo v0.3.4.3 patch done ==="
+          echo "=== TARSVideo v0.3.4.4 patch done ==="
 
       - name: Resolve Jellyfin VLC manifest conflicts
         run: |
@@ -459,15 +468,15 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.3.4.3-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.4-VLC-debug.apk
 
           ls -lh \
-            dist/TARSVideo-v0.3.4.3-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.4-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.3.4.3-VLC
-          path: dist/TARSVideo-v0.3.4.3-VLC-debug.apk
+          name: TARSVideo-Android-v0.3.4.4-VLC
+          path: dist/TARSVideo-v0.3.4.4-VLC-debug.apk
           retention-days: 14
           if-no-files-found: error
