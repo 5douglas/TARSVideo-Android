@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.3 VLC UI
+name: Build TARSVideo Android v0.3.4 VLC UI
 
 on:
   workflow_dispatch:
@@ -189,7 +189,151 @@ jobs:
 
           python3 ./patch_tarsvideo.py upstream
 
-          echo "=== TARSVideo v0.3 patch done ==="
+          echo "=== Applying TARSVideo v0.3.4 runtime/UI fixes ==="
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          upstream = Path("upstream")
+          vlc = Path("vlc-android-source")
+
+          # 1) Use VLC's official StartActivity bridge instead of launching
+          # VideoPlayerActivity directly.
+          ext = upstream / "app/src/main/java/org/jellyfin/mobile/bridge/ExternalPlayer.kt"
+          s = ext.read_text(encoding="utf-8")
+          s = s.replace(
+              "import org.videolan.vlc.gui.video.VideoPlayerActivity",
+              "import org.videolan.vlc.StartActivity",
+          )
+          s = s.replace(
+              "VideoPlayerActivity::class.java",
+              "StartActivity::class.java",
+          )
+          ext.write_text(s, encoding="utf-8")
+
+          # Allow Jellyfin HTTP/HTTPS streams through VLC StartActivity
+          # without storage permission.
+          start = vlc / "application/vlc-android/src/org/videolan/vlc/StartActivity.kt"
+          s = start.read_text(encoding="utf-8")
+          old = '''        if ((intent.data != null && intent.data!!.scheme == "content" && FileUtils.getUri(intent.data) != null)
+            || (Permissions.canReadStorage(applicationContext) || getStoragePermission())) when {'''
+          new = '''        if (intent.data?.scheme == "http"
+            || intent.data?.scheme == "https"
+            || (intent.data != null && intent.data!!.scheme == "content" && FileUtils.getUri(intent.data) != null)
+            || (Permissions.canReadStorage(applicationContext) || getStoragePermission())) when {'''
+          if old not in s:
+              raise SystemExit("VLC StartActivity permission gate pattern not found")
+          start.write_text(s.replace(old, new, 1), encoding="utf-8")
+
+          # 2) Force the fixed embedded VLC player even on upgrades where an
+          # older preference may still be stored.
+          prefs = upstream / "app/src/main/java/org/jellyfin/mobile/app/AppPreferences.kt"
+          s = prefs.read_text(encoding="utf-8")
+          s, n = re.subn(
+              r'(@VideoPlayerType\s+val videoPlayerType: String\s+get\(\) = )[^\n]+',
+              r'\1VideoPlayerType.EXTERNAL_PLAYER',
+              s,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit("AppPreferences videoPlayerType pattern not found")
+          prefs.write_text(s, encoding="utf-8")
+
+          # 3) Replace the Jellyfin player selector/options with one fixed
+          # TARSVideo VLC entry.
+          settings = upstream / "app/src/main/java/org/jellyfin/mobile/settings/SettingsFragment.kt"
+          s = settings.read_text(encoding="utf-8")
+          begin = s.find("        categoryHeader(PREF_CATEGORY_VIDEO_PLAYER)")
+          end = s.find("        val subtitleSettingsIntent", begin)
+          if begin == -1 or end == -1:
+              raise SystemExit("Settings video section boundaries not found")
+          fixed_video = '''        categoryHeader(PREF_CATEGORY_VIDEO_PLAYER) {
+              titleRes = R.string.pref_category_video_player
+          }
+          pref("tarsvideo_vlc_player") {
+              title = "TARSVideo VLC"
+              summary = "Player VLC integrado ao TARSVideo • Direct Play / Direct Stream"
+          }
+'''
+          s = s[:begin] + fixed_video + s[end:]
+          settings.write_text(s, encoding="utf-8")
+
+          for rel, title in [
+              ("app/src/main/res/values/strings.xml", "TARSVideo Settings"),
+              ("app/src/main/res/values-pt/strings.xml", "Configurações do TARSVideo"),
+          ]:
+              p = upstream / rel
+              if not p.exists():
+                  continue
+              x = p.read_text(encoding="utf-8")
+              x, n = re.subn(
+                  r'<string name="activity_name_settings">.*?</string>',
+                  f'<string name="activity_name_settings">{title}</string>',
+                  x,
+                  count=1,
+              )
+              if n:
+                  p.write_text(x, encoding="utf-8")
+
+          # 4) Correct adaptive icon/splash sizing.
+          foreground = upstream / "app/src/main/res/drawable/tars_icon_foreground.xml"
+          foreground.write_text(
+              '''<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:width="72dp"
+        android:height="72dp"
+        android:gravity="center"
+        android:drawable="@drawable/tars_icon" />
+</layer-list>
+''',
+              encoding="utf-8",
+          )
+
+          adaptive = upstream / "app/src/main/res/mipmap-anydpi-v26/tars_launcher.xml"
+          adaptive.write_text(
+              '''<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/tars_launcher_background" />
+    <foreground android:drawable="@drawable/tars_icon_foreground" />
+</adaptive-icon>
+''',
+              encoding="utf-8",
+          )
+
+          legacy = upstream / "app/src/main/res/mipmap-anydpi/tars_launcher.xml"
+          legacy.write_text(
+              '''<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/tars_launcher_background" />
+    <item
+        android:width="72dp"
+        android:height="72dp"
+        android:gravity="center"
+        android:drawable="@drawable/tars_icon" />
+</layer-list>
+''',
+              encoding="utf-8",
+          )
+
+          styles = upstream / "app/src/main/res/values/styles.xml"
+          s = styles.read_text(encoding="utf-8").replace(
+              "@drawable/tars_icon_padded",
+              "@drawable/tars_icon_foreground",
+          )
+          styles.write_text(s, encoding="utf-8")
+
+          web_layout = upstream / "app/src/main/res/layout/fragment_webview.xml"
+          s = web_layout.read_text(encoding="utf-8").replace(
+              "@drawable/tars_icon_padded",
+              "@drawable/tars_icon_foreground",
+          )
+          web_layout.write_text(s, encoding="utf-8")
+
+          print("TARSVideo v0.3.4 fixes applied")
+          PY
+
+          echo "=== TARSVideo v0.3.4 patch done ==="
 
       - name: Resolve Jellyfin VLC manifest conflicts
         run: |
@@ -279,15 +423,15 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.3-VLC-debug.apk
+            dist/TARSVideo-v0.3.4-VLC-debug.apk
 
           ls -lh \
-            dist/TARSVideo-v0.3-VLC-debug.apk
+            dist/TARSVideo-v0.3.4-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.3-VLC
-          path: dist/TARSVideo-v0.3-VLC-debug.apk
+          name: TARSVideo-Android-v0.3.4-VLC
+          path: dist/TARSVideo-v0.3.4-VLC-debug.apk
           retention-days: 14
           if-no-files-found: error
