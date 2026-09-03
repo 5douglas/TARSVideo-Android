@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.3.4.2 VLC UI
+name: Build TARSVideo Android v0.3.4.3 VLC UI
 
 on:
   workflow_dispatch:
@@ -182,10 +182,14 @@ jobs:
           grep -n "android_plugin_version" vlc-android-source/build.gradle | head
 
           mkdir -p \
-            upstream/app/src/main/res/drawable-nodpi
+            upstream/app/src/main/res/drawable-nodpi \
+            upstream/app/src/main/res/drawable-720dpi
 
           cp ./tars_icon.png \
             upstream/app/src/main/res/drawable-nodpi/tars_icon.png
+
+          cp ./tars_icon.png \
+            upstream/app/src/main/res/drawable-720dpi/tars_launcher_art.png
 
           python3 ./patch_tarsvideo.py upstream
 
@@ -222,6 +226,44 @@ jobs:
           if old_line not in s:
               raise SystemExit("VLC StartActivity HTTP/content gate line not found")
           start.write_text(s.replace(old_line, new_lines, 1), encoding="utf-8")
+
+          # Initialize the VLC runtime expected by StartActivity/VideoPlayerActivity.
+          app = upstream / "app/src/main/java/org/jellyfin/mobile/JellyfinApplication.kt"
+          s = app.read_text(encoding="utf-8")
+
+          import_anchor = "import org.videolan.resources.AppContextProvider\n"
+          extra_imports = "import org.videolan.resources.AppContextProvider\nimport org.videolan.resources.VLCInstance\nimport org.videolan.tools.Settings\nimport org.videolan.libvlc.Dialog\nimport org.videolan.vlc.gui.helpers.NotificationHelper\nimport org.videolan.vlc.util.DialogDelegate\n"
+          if "import org.videolan.tools.Settings" not in s:
+              if import_anchor not in s:
+                  raise SystemExit("JellyfinApplication VLC import anchor not found")
+              s = s.replace(import_anchor, extra_imports, 1)
+
+          factory_anchor = "        FactoryManager.registerFactory(ILibVLCFactory.factoryId, LibVLCFactory())\n"
+          runtime_init = "        FactoryManager.registerFactory(ILibVLCFactory.factoryId, LibVLCFactory())\n\n        // VLC Android requires Settings.device before Settings.showTvUi is read.\n        Settings.getInstance(this)\n        Settings.initPostMigration(this)\n        NotificationHelper.createNotificationChannels(this)\n\n        if (VLCInstance.testCompatibleCPU(this)) {\n            Dialog.setCallbacks(VLCInstance.getInstance(this), DialogDelegate)\n        }\n"
+          if "Settings.getInstance(this)" not in s:
+              if factory_anchor not in s:
+                  raise SystemExit("JellyfinApplication factory anchor not found")
+              s = s.replace(factory_anchor, runtime_init, 1)
+
+          app.write_text(s, encoding="utf-8")
+
+          # Remove VLC's own launcher filter. StartActivity remains usable by
+          # TARSVideo, but it no longer creates a second launcher icon.
+          vlc_manifest = vlc / "application/vlc-android/AndroidManifest.xml"
+          s = vlc_manifest.read_text(encoding="utf-8")
+          activity_pos = s.find('android:name=".StartActivity"')
+          if activity_pos == -1:
+              raise SystemExit("VLC StartActivity manifest entry not found")
+          filter_start = s.find("<intent-filter>", activity_pos)
+          filter_end = s.find("</intent-filter>", filter_start)
+          if filter_start == -1 or filter_end == -1:
+              raise SystemExit("VLC StartActivity launcher filter not found")
+          filter_end += len("</intent-filter>")
+          launcher_block = s[filter_start:filter_end]
+          if 'android.intent.action.MAIN' not in launcher_block or 'android.intent.category.LAUNCHER' not in launcher_block:
+              raise SystemExit("First VLC StartActivity filter is not launcher")
+          s = s[:filter_start] + s[filter_end:]
+          vlc_manifest.write_text(s, encoding="utf-8")
 
           # 2) Force the fixed embedded VLC player even on upgrades where an
           # older preference may still be stored.
@@ -279,10 +321,8 @@ jobs:
               '''<?xml version="1.0" encoding="utf-8"?>
           <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
               <item
-                  android:width="72dp"
-                  android:height="72dp"
                   android:gravity="center"
-                  android:drawable="@drawable/tars_icon" />
+                  android:drawable="@drawable/tars_launcher_art" />
           </layer-list>
           ''',
               encoding="utf-8",
@@ -305,10 +345,8 @@ jobs:
           <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
               <item android:drawable="@color/tars_launcher_background" />
               <item
-                  android:width="72dp"
-                  android:height="72dp"
                   android:gravity="center"
-                  android:drawable="@drawable/tars_icon" />
+                  android:drawable="@drawable/tars_launcher_art" />
           </layer-list>
           ''',
               encoding="utf-8",
@@ -328,10 +366,10 @@ jobs:
           )
           web_layout.write_text(s, encoding="utf-8")
 
-          print("TARSVideo v0.3.4 fixes applied")
+          print("TARSVideo v0.3.4.3 fixes applied")
           PY
 
-          echo "=== TARSVideo v0.3.4 patch done ==="
+          echo "=== TARSVideo v0.3.4.3 patch done ==="
 
       - name: Resolve Jellyfin VLC manifest conflicts
         run: |
@@ -421,15 +459,15 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.3.4.2-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.3-VLC-debug.apk
 
           ls -lh \
-            dist/TARSVideo-v0.3.4.2-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.3-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.3.4.2-VLC
-          path: dist/TARSVideo-v0.3.4.2-VLC-debug.apk
+          name: TARSVideo-Android-v0.3.4.3-VLC
+          path: dist/TARSVideo-v0.3.4.3-VLC-debug.apk
           retention-days: 14
           if-no-files-found: error
