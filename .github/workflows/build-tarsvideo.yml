@@ -42,13 +42,66 @@ jobs:
 
           root = Path("vlc-android-source")
 
+          # Jellyfin at the pinned commit builds with AGP 9.4.0.
+          # A composite Android build cannot mix AGP 9.4.0 and VLC's 9.1.1,
+          # so make the included VLC build use the same AGP version.
           settings = root / "settings.gradle"
           text = settings.read_text(encoding="utf-8")
+
+          old_settings_agp = 'id("com.android.settings") version \'9.1.1\''
+          new_settings_agp = 'id("com.android.settings") version \'9.4.0\''
+
+          if old_settings_agp not in text:
+              raise SystemExit(
+                  "VLC settings.gradle AGP 9.1.1 pattern not found"
+              )
+
           text = text.replace(
-              "include ':libvlcjni:libvlc', ':medialibrary'",
-              "include ':medialibrary'",
+              old_settings_agp,
+              new_settings_agp,
+              1,
           )
-          settings.write_text(text, encoding="utf-8")
+
+          # Public VLC checkout does not contain libvlcjni/libvlc.
+          # Keep the VLC UI sources, but use the published LibVLC AAR.
+          old_include = "include ':libvlcjni:libvlc', ':medialibrary'"
+          if old_include not in text:
+              raise SystemExit(
+                  "VLC libvlcjni include pattern not found"
+              )
+
+          text = text.replace(
+              old_include,
+              "include ':medialibrary'",
+              1,
+          )
+
+          settings.write_text(
+              text,
+              encoding="utf-8",
+          )
+
+          top_gradle = root / "build.gradle"
+          text = top_gradle.read_text(encoding="utf-8")
+
+          old_build_agp = "ext.android_plugin_version = '9.1.1'"
+          new_build_agp = "ext.android_plugin_version = '9.4.0'"
+
+          if old_build_agp not in text:
+              raise SystemExit(
+                  "VLC build.gradle AGP 9.1.1 pattern not found"
+              )
+
+          text = text.replace(
+              old_build_agp,
+              new_build_agp,
+              1,
+          )
+
+          top_gradle.write_text(
+              text,
+              encoding="utf-8",
+          )
 
           replacements = {
               "application/resources/build.gradle": [
@@ -96,11 +149,12 @@ jobs:
                   encoding="utf-8",
               )
 
+          # VLC root build.gradle always reads this file.
           (root / "local.properties").touch()
 
-          print(
-              "VLC Android source prepared for composite build"
-          )
+          print("VLC Android source prepared")
+          print("AGP aligned: 9.4.0")
+          print("Local libvlcjni dependency removed")
           PY
 
       - name: Setup Java 21
@@ -116,9 +170,6 @@ jobs:
         run: |
           set -e
 
-          echo "=== TARSVideo files ==="
-          ls -la
-
           echo "=== Jellyfin commit ==="
           git -C upstream rev-parse HEAD
 
@@ -126,8 +177,15 @@ jobs:
           git -C vlc-android-source rev-parse HEAD
           grep -n "versionName" vlc-android-source/build.gradle | head
 
-          mkdir -p upstream/app/src/main/res/drawable-nodpi
-          cp ./tars_icon.png             upstream/app/src/main/res/drawable-nodpi/tars_icon.png
+          echo "=== AGP alignment ==="
+          grep -n "com.android.settings" vlc-android-source/settings.gradle
+          grep -n "android_plugin_version" vlc-android-source/build.gradle | head
+
+          mkdir -p \
+            upstream/app/src/main/res/drawable-nodpi
+
+          cp ./tars_icon.png \
+            upstream/app/src/main/res/drawable-nodpi/tars_icon.png
 
           python3 ./patch_tarsvideo.py upstream
 
@@ -139,9 +197,22 @@ jobs:
           set -e
           chmod +x gradlew
 
-          ./gradlew             :app:dependencies             --configuration libreDebugRuntimeClasspath             > ../vlc-deps.txt
+          ./gradlew \
+            :app:dependencies \
+            --configuration libreDebugRuntimeClasspath \
+            > ../vlc-deps.txt
 
-          grep -n             "org.videolan.tars:vlc-android\|libvlc-all\|medialibrary-all"             ../vlc-deps.txt             | head -60             || true
+          echo "=== VLC dependency lines ==="
+          grep -n \
+            "org.videolan.tars:vlc-android\|libvlc-all\|medialibrary-all" \
+            ../vlc-deps.txt \
+            | head -80 \
+            || true
+
+          if grep -q "org.videolan.tars:vlc-android:3.7.1 FAILED" ../vlc-deps.txt; then
+            echo "ERROR: embedded VLC project substitution failed"
+            exit 1
+          fi
 
       - name: Build APK
         working-directory: upstream
@@ -149,18 +220,25 @@ jobs:
           set -e
           chmod +x gradlew
 
-          ./gradlew             assembleLibreDebug             --stacktrace
+          ./gradlew \
+            assembleLibreDebug \
+            --stacktrace
 
       - name: Collect APK
         run: |
           set -e
-
           mkdir -p dist
 
-          find upstream/app/build/outputs/apk             -type f             -name "*.apk"             -print
+          find upstream/app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print
 
           APK="$(
-            find upstream/app/build/outputs/apk               -type f               -name "*.apk"               | head -n 1
+            find upstream/app/build/outputs/apk \
+              -type f \
+              -name "*.apk" \
+              | head -n 1
           )"
 
           if [ -z "$APK" ]; then
@@ -168,9 +246,11 @@ jobs:
             exit 1
           fi
 
-          cp "$APK"             dist/TARSVideo-v0.3-VLC-debug.apk
+          cp "$APK" \
+            dist/TARSVideo-v0.3-VLC-debug.apk
 
-          ls -lh             dist/TARSVideo-v0.3-VLC-debug.apk
+          ls -lh \
+            dist/TARSVideo-v0.3-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
