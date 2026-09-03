@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.3.4 VLC UI
+name: Build TARSVideo Android v0.3.4.2 VLC UI
 
 on:
   workflow_dispatch:
@@ -215,15 +215,13 @@ jobs:
           # without storage permission.
           start = vlc / "application/vlc-android/src/org/videolan/vlc/StartActivity.kt"
           s = start.read_text(encoding="utf-8")
-          old = '''        if ((intent.data != null && intent.data!!.scheme == "content" && FileUtils.getUri(intent.data) != null)
-            || (Permissions.canReadStorage(applicationContext) || getStoragePermission())) when {'''
-          new = '''        if (intent.data?.scheme == "http"
+          old_line = '''        if ((intent.data != null && intent.data!!.scheme == "content" && FileUtils.getUri(intent.data) != null)'''
+          new_lines = '''        if (intent.data?.scheme == "http"
             || intent.data?.scheme == "https"
-            || (intent.data != null && intent.data!!.scheme == "content" && FileUtils.getUri(intent.data) != null)
-            || (Permissions.canReadStorage(applicationContext) || getStoragePermission())) when {'''
-          if old not in s:
-              raise SystemExit("VLC StartActivity permission gate pattern not found")
-          start.write_text(s.replace(old, new, 1), encoding="utf-8")
+            || (intent.data != null && intent.data!!.scheme == "content" && FileUtils.getUri(intent.data) != null)'''
+          if old_line not in s:
+              raise SystemExit("VLC StartActivity HTTP/content gate line not found")
+          start.write_text(s.replace(old_line, new_lines, 1), encoding="utf-8")
 
           # 2) Force the fixed embedded VLC player even on upgrades where an
           # older preference may still be stored.
@@ -423,15 +421,15 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.3.4-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.2-VLC-debug.apk
 
           ls -lh \
-            dist/TARSVideo-v0.3.4-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.2-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.3.4-VLC
-          path: dist/TARSVideo-v0.3.4-VLC-debug.apk
+          name: TARSVideo-Android-v0.3.4.2-VLC
+          path: dist/TARSVideo-v0.3.4.2-VLC-debug.apk
           retention-days: 14
           if-no-files-found: error
