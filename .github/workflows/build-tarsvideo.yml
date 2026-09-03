@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.3.4.4 VLC UI
+name: Build TARSVideo Android v0.3.4.5 VLC UI
 
 on:
   workflow_dispatch:
@@ -12,6 +12,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    env:
+      VLC_OPEN_SUBTITLES_API_KEY: ${{ secrets.VLC_OPEN_SUBTITLES_API_KEY }}
     timeout-minutes: 75
 
     steps:
@@ -157,6 +159,16 @@ jobs:
           print("Local libvlcjni dependency removed")
           PY
 
+      - name: Check OpenSubtitles API key
+        run: |
+          set -e
+          if [ -z "$VLC_OPEN_SUBTITLES_API_KEY" ]; then
+            echo "::error::Missing GitHub Actions secret VLC_OPEN_SUBTITLES_API_KEY"
+            echo "Create your OpenSubtitles API consumer key and save it as repository secret VLC_OPEN_SUBTITLES_API_KEY."
+            exit 1
+          fi
+          echo "OpenSubtitles API key is configured."
+
       - name: Setup Java 21
         uses: actions/setup-java@v5
         with:
@@ -222,6 +234,25 @@ jobs:
               "VideoPlayerActivity::class.java",
               "StartActivity::class.java",
           )
+          # Embedded VLC can return the same player.result suffix with a
+          # package-qualified prefix that differs from Jellyfin's hard-coded
+          # org.videolan.vlc action. Normalize all VLC player.result actions.
+          s = ext.read_text(encoding="utf-8")
+          s = s.replace(
+              "        when (val action = intent?.action) {",
+              "        val action = intent?.action\n        when {",
+              1,
+          )
+          replacements = {
+              "            Constants.MPV_PLAYER_RESULT_ACTION -> handleMPVPlayer(resultCode, intent)": "            action == Constants.MPV_PLAYER_RESULT_ACTION -> handleMPVPlayer(resultCode, intent)",
+              "            Constants.MX_PLAYER_RESULT_ACTION -> handleMXPlayer(resultCode, intent)": "            action == Constants.MX_PLAYER_RESULT_ACTION -> handleMXPlayer(resultCode, intent)",
+              "            Constants.VLC_PLAYER_RESULT_ACTION -> handleVLCPlayer(resultCode, intent)": "            action == Constants.VLC_PLAYER_RESULT_ACTION || action?.endsWith(\".player.result\") == true -> handleVLCPlayer(resultCode, intent)",
+              "            Constants.MPVKT_PLAYER_RESULT_ACTION -> handleMPVKTPlayer(resultCode, intent)": "            action == Constants.MPVKT_PLAYER_RESULT_ACTION -> handleMPVKTPlayer(resultCode, intent)",
+          }
+          for old, new in replacements.items():
+              if old not in s:
+                  raise SystemExit(f"ExternalPlayer result action pattern not found: {old}")
+              s = s.replace(old, new, 1)
           ext.write_text(s, encoding="utf-8")
 
           # Allow Jellyfin HTTP/HTTPS streams through VLC StartActivity
@@ -375,10 +406,10 @@ jobs:
           )
           web_layout.write_text(s, encoding="utf-8")
 
-          print("TARSVideo v0.3.4.4 fixes applied")
+          print("TARSVideo v0.3.4.5 fixes applied")
           PY
 
-          echo "=== TARSVideo v0.3.4.4 patch done ==="
+          echo "=== TARSVideo v0.3.4.5 patch done ==="
 
       - name: Resolve Jellyfin VLC manifest conflicts
         run: |
@@ -468,15 +499,15 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.3.4.4-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.5-VLC-debug.apk
 
           ls -lh \
-            dist/TARSVideo-v0.3.4.4-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.5-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.3.4.4-VLC
-          path: dist/TARSVideo-v0.3.4.4-VLC-debug.apk
+          name: TARSVideo-Android-v0.3.4.5-VLC
+          path: dist/TARSVideo-v0.3.4.5-VLC-debug.apk
           retention-days: 14
           if-no-files-found: error
