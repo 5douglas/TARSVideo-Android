@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.3.4.5 VLC UI
+name: Build TARSVideo Android v0.3.4.6 VLC UI
 
 on:
   workflow_dispatch:
@@ -222,6 +222,40 @@ jobs:
               raise SystemExit("Jellyfin buildFeatures block not found for dataBinding fix")
           app_gradle.write_text(s.replace(old_features, new_features, 1), encoding="utf-8")
 
+          # The upstream VLC source stores its official API key in an
+          # obfuscated form and decodes it at runtime. TARSVideo receives a
+          # normal OpenSubtitles consumer key from GitHub Actions, so use the
+          # supplied BuildConfig value directly.
+          os_service = vlc / "application/resources/src/main/java/org/videolan/resources/opensubtitles/OpenSubtitleService.kt"
+          s = os_service.read_text(encoding="utf-8")
+          old_getosk = 'fun getOSK() = "${BuildConfig.VLC_OPEN_SUBTITLES_API_KEY}${(-47).forbiddenChars()}Y"'
+          new_getosk = 'fun getOSK() = BuildConfig.VLC_OPEN_SUBTITLES_API_KEY'
+          if old_getosk not in s:
+              raise SystemExit("OpenSubtitleService getOSK pattern not found")
+          s = s.replace(old_getosk, new_getosk, 1)
+          old_header = '.header("Api-Key", getOSK().substrlng(55))'
+          new_header = '.header("Api-Key", getOSK())'
+          if old_header not in s:
+              raise SystemExit("OpenSubtitleService Api-Key header pattern not found")
+          s = s.replace(old_header, new_header, 1)
+          os_service.write_text(s, encoding="utf-8")
+
+          # The complete VLC UI plus Data Binding needs more heap during APK
+          # packaging than Jellyfin's default 2 GiB.
+          gradle_props = upstream / "gradle.properties"
+          s = gradle_props.read_text(encoding="utf-8")
+          old_heap = "org.gradle.jvmargs=-Xmx2048m"
+          new_heap = "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
+          if old_heap in s:
+              s = s.replace(old_heap, new_heap, 1)
+          elif "org.gradle.jvmargs=" not in s:
+              s = new_heap + "\n" + s
+          if "org.gradle.workers.max=" not in s:
+              s += "\norg.gradle.workers.max=2\n"
+          if "kotlin.daemon.jvmargs=" not in s:
+              s += "kotlin.daemon.jvmargs=-Xmx1024m\n"
+          gradle_props.write_text(s, encoding="utf-8")
+
           # 1) Use VLC's official StartActivity bridge instead of launching
           # VideoPlayerActivity directly.
           ext = upstream / "app/src/main/java/org/jellyfin/mobile/bridge/ExternalPlayer.kt"
@@ -237,7 +271,8 @@ jobs:
           # Embedded VLC can return the same player.result suffix with a
           # package-qualified prefix that differs from Jellyfin's hard-coded
           # org.videolan.vlc action. Normalize all VLC player.result actions.
-          s = ext.read_text(encoding="utf-8")
+          # Keep using the same in-memory source so the StartActivity bridge
+          # changes above are not discarded.
           s = s.replace(
               "        when (val action = intent?.action) {",
               "        val action = intent?.action\n        when {",
@@ -406,10 +441,10 @@ jobs:
           )
           web_layout.write_text(s, encoding="utf-8")
 
-          print("TARSVideo v0.3.4.5 fixes applied")
+          print("TARSVideo v0.3.4.6 fixes applied")
           PY
 
-          echo "=== TARSVideo v0.3.4.5 patch done ==="
+          echo "=== TARSVideo v0.3.4.6 patch done ==="
 
       - name: Resolve Jellyfin VLC manifest conflicts
         run: |
@@ -474,6 +509,7 @@ jobs:
 
           ./gradlew \
             assembleLibreDebug \
+            --max-workers=2 \
             --stacktrace
 
       - name: Collect APK
@@ -499,15 +535,15 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.3.4.5-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.6-VLC-debug.apk
 
           ls -lh \
-            dist/TARSVideo-v0.3.4.5-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.6-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.3.4.5-VLC
-          path: dist/TARSVideo-v0.3.4.5-VLC-debug.apk
+          name: TARSVideo-Android-v0.3.4.6-VLC
+          path: dist/TARSVideo-v0.3.4.6-VLC-debug.apk
           retention-days: 14
           if-no-files-found: error
