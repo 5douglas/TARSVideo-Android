@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.3.4.8 VLC UI
+name: Build TARSVideo Android v0.3.4.8.1 VLC UI
 
 on:
   workflow_dispatch:
@@ -44,9 +44,6 @@ jobs:
 
           root = Path("vlc-android-source")
 
-          # Jellyfin at the pinned commit builds with AGP 9.4.0.
-          # A composite Android build cannot mix AGP 9.4.0 and VLC's 9.1.1,
-          # so make the included VLC build use the same AGP version.
           settings = root / "settings.gradle"
           text = settings.read_text(encoding="utf-8")
 
@@ -64,8 +61,6 @@ jobs:
               1,
           )
 
-          # Public VLC checkout does not contain libvlcjni/libvlc.
-          # Keep the VLC UI sources, but use the published LibVLC AAR.
           old_include = "include ':libvlcjni:libvlc', ':medialibrary'"
           if old_include not in text:
               raise SystemExit(
@@ -151,7 +146,6 @@ jobs:
                   encoding="utf-8",
               )
 
-          # VLC root build.gradle always reads this file.
           (root / "local.properties").touch()
 
           print("VLC Android source prepared")
@@ -213,287 +207,506 @@ jobs:
           upstream = Path("upstream")
           vlc = Path("vlc-android-source")
 
-          # VLC overlay requires Android Data Binding generated mapper.
           app_gradle = upstream / "app/build.gradle.kts"
           s = app_gradle.read_text(encoding="utf-8")
+
           old_features = "    buildFeatures {\n        buildConfig = true\n        viewBinding = true\n        compose = true\n    }"
           new_features = "    buildFeatures {\n        buildConfig = true\n        viewBinding = true\n        dataBinding = true\n        compose = true\n    }"
-          if old_features not in s:
-              raise SystemExit("Jellyfin buildFeatures block not found for dataBinding fix")
-          app_gradle.write_text(s.replace(old_features, new_features, 1), encoding="utf-8")
 
-          # The upstream VLC source stores its official API key in an
-          # obfuscated form and decodes it at runtime. TARSVideo receives a
-          # normal OpenSubtitles consumer key from GitHub Actions, so use the
-          # supplied BuildConfig value directly.
+          if old_features not in s:
+              raise SystemExit(
+                  "Jellyfin buildFeatures block not found for dataBinding fix"
+              )
+
+          app_gradle.write_text(
+              s.replace(old_features, new_features, 1),
+              encoding="utf-8",
+          )
+
           os_service = vlc / "application/resources/src/main/java/org/videolan/resources/opensubtitles/OpenSubtitleService.kt"
           s = os_service.read_text(encoding="utf-8")
+
           old_getosk = 'fun getOSK() = "${BuildConfig.VLC_OPEN_SUBTITLES_API_KEY}${(-47).forbiddenChars()}Y"'
           new_getosk = 'fun getOSK() = BuildConfig.VLC_OPEN_SUBTITLES_API_KEY'
+
           if old_getosk not in s:
-              raise SystemExit("OpenSubtitleService getOSK pattern not found")
-          s = s.replace(old_getosk, new_getosk, 1)
+              raise SystemExit(
+                  "OpenSubtitleService getOSK pattern not found"
+              )
+
+          s = s.replace(
+              old_getosk,
+              new_getosk,
+              1,
+          )
+
           old_header = '.header("Api-Key", getOSK().substrlng(55))'
           new_header = '.header("Api-Key", getOSK())'
-          if old_header not in s:
-              raise SystemExit("OpenSubtitleService Api-Key header pattern not found")
-          s = s.replace(old_header, new_header, 1)
-          os_service.write_text(s, encoding="utf-8")
 
-          # The complete VLC UI plus Data Binding needs more heap during APK
-          # packaging than Jellyfin's default 2 GiB.
+          if old_header not in s:
+              raise SystemExit(
+                  "OpenSubtitleService Api-Key header pattern not found"
+              )
+
+          s = s.replace(
+              old_header,
+              new_header,
+              1,
+          )
+
+          os_service.write_text(
+              s,
+              encoding="utf-8",
+          )
+
           gradle_props = upstream / "gradle.properties"
           s = gradle_props.read_text(encoding="utf-8")
+
           old_heap = "org.gradle.jvmargs=-Xmx2048m"
           new_heap = "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
+
           if old_heap in s:
-              s = s.replace(old_heap, new_heap, 1)
+              s = s.replace(
+                  old_heap,
+                  new_heap,
+                  1,
+              )
           elif "org.gradle.jvmargs=" not in s:
               s = new_heap + "\n" + s
+
           if "org.gradle.workers.max=" not in s:
               s += "\norg.gradle.workers.max=2\n"
+
           if "kotlin.daemon.jvmargs=" not in s:
               s += "kotlin.daemon.jvmargs=-Xmx1024m\n"
-          gradle_props.write_text(s, encoding="utf-8")
 
-          # VLC subtitle downloader performs getDownloadLink() outside its
-          # try/catch. If OpenSubtitles returns a download-limit/API/network
-          # error, the coroutine exception can terminate the whole Activity.
+          gradle_props.write_text(
+              s,
+              encoding="utf-8",
+          )
+
+          # OpenSubtitles crash guard
           sub_dialog = vlc / "application/vlc-android/src/org/videolan/vlc/gui/dialogs/SubtitleDownloaderDialogFragment.kt"
           s = sub_dialog.read_text(encoding="utf-8")
 
-          old_download_block = '''                State.NotDownloaded -> {
-                    var downloadAvailable = true
-                    withContext(Dispatchers.IO) {
-                        Log.i("SubtitleDownload", "Launching download for ${subtitleEvent.item.idSubtitle}")
-                        val downloadLink = OpenSubtitleRepository.getInstance()
-                            .getDownloadLink(subtitleEvent.item.fileId)
-                        val openSubtitlesLimit = OpenSubtitlesLimit(
-                            downloadLink.requests,
-                            downloadLink.requests + downloadLink.remaining,
-                            downloadLink.resetTimeUtc
-                        )
-                        Log.i("SubtitleDownload", "Subtitle download retrieved: ${downloadLink.link} - ${downloadLink.fileName}")
-                        try {
-                            OpenSubtitlesUtils.saveLimit(settings, openSubtitlesLimit)
-                            viewModel.observableLimit.set(openSubtitlesLimit)
-                            subtitleEvent.item.zipDownloadLink = downloadLink.link
-                            subtitleEvent.item.fileName = downloadLink.fileName
-                            subtitleEvent.item.downloadError = false
-                        } catch (e: Exception) {
-                            Log.w("SubtitleDownload", e.message, e)
-                            downloadAvailable = false
-                            subtitleEvent.item.downloadError = true
-                            withContext(Dispatchers.Main) {
-                                downloadAdapter.notifyItemChanged(downloadAdapter.dataset?.indexOf(subtitleEvent.item) ?: 0)
-                            }
-                        }
-                    }
-                    if (downloadAvailable) VLCDownloadManager.download(requireActivity(), subtitleEvent.item, true)
-                }'''
+          download_pattern = re.compile(
+              r"                State\.NotDownloaded -> \{\n.*?\n                \}(?=\n                State\.Downloaded ->)",
+              re.DOTALL,
+          )
 
           new_download_block = '''                State.NotDownloaded -> {
-                    var downloadAvailable = true
                     try {
                         withContext(Dispatchers.IO) {
-                            Log.i("SubtitleDownload", "Launching download for ${subtitleEvent.item.idSubtitle}")
-                            val downloadLink = OpenSubtitleRepository.getInstance()
-                                .getDownloadLink(subtitleEvent.item.fileId)
-                            val openSubtitlesLimit = OpenSubtitlesLimit(
-                                downloadLink.requests,
-                                downloadLink.requests + downloadLink.remaining,
-                                downloadLink.resetTimeUtc
+                            Log.i(
+                                "SubtitleDownload",
+                                "Launching download for ${subtitleEvent.item.idSubtitle}"
                             )
-                            Log.i("SubtitleDownload", "Subtitle download retrieved: ${downloadLink.link} - ${downloadLink.fileName}")
-                            OpenSubtitlesUtils.saveLimit(settings, openSubtitlesLimit)
-                            viewModel.observableLimit.set(openSubtitlesLimit)
-                            subtitleEvent.item.zipDownloadLink = downloadLink.link
-                            subtitleEvent.item.fileName = downloadLink.fileName
+
+                            val downloadLink =
+                                OpenSubtitleRepository.getInstance()
+                                    .getDownloadLink(
+                                        subtitleEvent.item.fileId
+                                    )
+
+                            val openSubtitlesLimit =
+                                OpenSubtitlesLimit(
+                                    downloadLink.requests,
+                                    downloadLink.requests +
+                                        downloadLink.remaining,
+                                    downloadLink.resetTimeUtc
+                                )
+
+                            Log.i(
+                                "SubtitleDownload",
+                                "Subtitle download retrieved: ${downloadLink.link} - ${downloadLink.fileName}"
+                            )
+
+                            OpenSubtitlesUtils.saveLimit(
+                                settings,
+                                openSubtitlesLimit
+                            )
+
+                            viewModel.observableLimit.set(
+                                openSubtitlesLimit
+                            )
+
+                            subtitleEvent.item.zipDownloadLink =
+                                downloadLink.link
+
+                            subtitleEvent.item.fileName =
+                                downloadLink.fileName
+
                             subtitleEvent.item.downloadError = false
                         }
 
-                        if (downloadAvailable) {
-                            VLCDownloadManager.download(requireActivity(), subtitleEvent.item, true)
-                        }
+                        VLCDownloadManager.download(
+                            requireActivity(),
+                            subtitleEvent.item,
+                            true
+                        )
                     } catch (e: Exception) {
-                        Log.w("SubtitleDownload", "OpenSubtitles download failed", e)
-                        downloadAvailable = false
+                        Log.w(
+                            "SubtitleDownload",
+                            "OpenSubtitles download failed",
+                            e
+                        )
+
                         subtitleEvent.item.downloadError = true
+
                         withContext(Dispatchers.Main) {
-                            downloadAdapter.notifyItemChanged(
-                                downloadAdapter.dataset?.indexOf(subtitleEvent.item) ?: 0
-                            )
-                            if (::toast.isInitialized) toast.cancel()
-                            val detail = e.message?.takeIf { it.isNotBlank() } ?: "erro da API"
+                            val index =
+                                downloadAdapter.dataset
+                                    ?.indexOf(subtitleEvent.item)
+                                    ?: -1
+
+                            if (index >= 0) {
+                                downloadAdapter.notifyItemChanged(
+                                    index
+                                )
+                            }
+
+                            if (::toast.isInitialized) {
+                                toast.cancel()
+                            }
+
+                            val detail =
+                                e.message
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: "erro da API"
+
                             toast = Toast.makeText(
                                 requireContext(),
                                 "Não foi possível baixar esta legenda do OpenSubtitles: $detail",
                                 Toast.LENGTH_LONG
                             )
+
                             toast.show()
                         }
                     }
                 }'''
 
-          if old_download_block not in s:
-              raise SystemExit("VLC subtitle download block not found")
-          s = s.replace(old_download_block, new_download_block, 1)
-          sub_dialog.write_text(s, encoding="utf-8")
+          s, replaced = download_pattern.subn(
+              new_download_block,
+              s,
+              count=1,
+          )
 
-          # 1) Use VLC's official StartActivity bridge instead of launching
-          # VideoPlayerActivity directly.
+          if replaced != 1:
+              raise SystemExit(
+                  f"VLC subtitle NotDownloaded branch replacement failed: {replaced}"
+              )
+
+          sub_dialog.write_text(
+              s,
+              encoding="utf-8",
+          )
+
+          # Jellyfin -> VLC
           ext = upstream / "app/src/main/java/org/jellyfin/mobile/bridge/ExternalPlayer.kt"
           s = ext.read_text(encoding="utf-8")
+
           s = s.replace(
               "import org.videolan.vlc.gui.video.VideoPlayerActivity",
               "import org.videolan.vlc.StartActivity",
           )
+
           s = s.replace(
               "VideoPlayerActivity::class.java",
               "StartActivity::class.java",
           )
-          # Embedded VLC can return the same player.result suffix with a
-          # package-qualified prefix that differs from Jellyfin's hard-coded
-          # org.videolan.vlc action. Normalize all VLC player.result actions.
-          # Keep using the same in-memory source so the StartActivity bridge
-          # changes above are not discarded.
+
           s = s.replace(
               "        when (val action = intent?.action) {",
               "        val action = intent?.action\n        when {",
               1,
           )
+
           replacements = {
-              "            Constants.MPV_PLAYER_RESULT_ACTION -> handleMPVPlayer(resultCode, intent)": "            action == Constants.MPV_PLAYER_RESULT_ACTION -> handleMPVPlayer(resultCode, intent)",
-              "            Constants.MX_PLAYER_RESULT_ACTION -> handleMXPlayer(resultCode, intent)": "            action == Constants.MX_PLAYER_RESULT_ACTION -> handleMXPlayer(resultCode, intent)",
-              "            Constants.VLC_PLAYER_RESULT_ACTION -> handleVLCPlayer(resultCode, intent)": "            action == Constants.VLC_PLAYER_RESULT_ACTION || action?.endsWith(\".player.result\") == true -> handleVLCPlayer(resultCode, intent)",
-              "            Constants.MPVKT_PLAYER_RESULT_ACTION -> handleMPVKTPlayer(resultCode, intent)": "            action == Constants.MPVKT_PLAYER_RESULT_ACTION -> handleMPVKTPlayer(resultCode, intent)",
+              "            Constants.MPV_PLAYER_RESULT_ACTION -> handleMPVPlayer(resultCode, intent)":
+                  "            action == Constants.MPV_PLAYER_RESULT_ACTION -> handleMPVPlayer(resultCode, intent)",
+
+              "            Constants.MX_PLAYER_RESULT_ACTION -> handleMXPlayer(resultCode, intent)":
+                  "            action == Constants.MX_PLAYER_RESULT_ACTION -> handleMXPlayer(resultCode, intent)",
+
+              "            Constants.VLC_PLAYER_RESULT_ACTION -> handleVLCPlayer(resultCode, intent)":
+                  "            action == Constants.VLC_PLAYER_RESULT_ACTION || action?.endsWith(\".player.result\") == true -> handleVLCPlayer(resultCode, intent)",
+
+              "            Constants.MPVKT_PLAYER_RESULT_ACTION -> handleMPVKTPlayer(resultCode, intent)":
+                  "            action == Constants.MPVKT_PLAYER_RESULT_ACTION -> handleMPVKTPlayer(resultCode, intent)",
           }
+
           for old, new in replacements.items():
               if old not in s:
-                  raise SystemExit(f"ExternalPlayer result action pattern not found: {old}")
-              s = s.replace(old, new, 1)
-          # Pass ALL Jellyfin external/sidecar subtitles to VLC.
+                  raise SystemExit(
+                      f"ExternalPlayer result action pattern not found: {old}"
+                  )
+
+              s = s.replace(
+                  old,
+                  new,
+                  1,
+              )
+
+          # Send ALL Jellyfin sidecar subtitles to VLC.
           old_vlc_subs = "            // VLC\\n            if (enabledSubUrl != null) putExtra(\\\"subtitles_location\\\", enabledSubUrl)"
+
           new_vlc_subs = "            // VLC / TARSVideo\\n            val tarsExternalSubUrls = externalSubs.map { stream ->\\n                apiClient.createUrl(stream.deliveryUrl)\\n            }\\n            putExtra(\\\"tars_external_sub_urls\\\", tarsExternalSubUrls.toTypedArray())\\n            putExtra(\\\"tars_external_sub_names\\\", externalSubs.map(ExternalSubtitleStream::displayTitle).toTypedArray())\\n            if (enabledSubUrl != null) putExtra(\\\"subtitles_location\\\", enabledSubUrl)"
+
           if old_vlc_subs not in s:
-              raise SystemExit("Jellyfin VLC subtitle handoff block not found")
-          s = s.replace(old_vlc_subs, new_vlc_subs, 1)
+              raise SystemExit(
+                  "Jellyfin VLC subtitle handoff block not found"
+              )
 
-          ext.write_text(s, encoding="utf-8")
+          s = s.replace(
+              old_vlc_subs,
+              new_vlc_subs,
+              1,
+          )
 
-          # Allow Jellyfin HTTP/HTTPS streams through VLC StartActivity
-          # without storage permission.
+          ext.write_text(
+              s,
+              encoding="utf-8",
+          )
+
+          # Allow HTTP/HTTPS streams in VLC StartActivity
           start = vlc / "application/vlc-android/src/org/videolan/vlc/StartActivity.kt"
           s = start.read_text(encoding="utf-8")
+
           old_line = '''        if ((intent.data != null && intent.data!!.scheme == "content" && FileUtils.getUri(intent.data) != null)'''
+
           new_lines = '''        if (intent.data?.scheme == "http"
             || intent.data?.scheme == "https"
             || (intent.data != null && intent.data!!.scheme == "content" && FileUtils.getUri(intent.data) != null)'''
-          if old_line not in s:
-              raise SystemExit("VLC StartActivity HTTP/content gate line not found")
-          start.write_text(s.replace(old_line, new_lines, 1), encoding="utf-8")
 
-          # VLC accepts only one subtitles_location extra by default. Register
-          # every sidecar URL from Jellyfin as a selectable VLC subtitle track.
+          if old_line not in s:
+              raise SystemExit(
+                  "VLC StartActivity HTTP/content gate line not found"
+              )
+
+          start.write_text(
+              s.replace(
+                  old_line,
+                  new_lines,
+                  1,
+              ),
+              encoding="utf-8",
+          )
+
+          # Register all Jellyfin sidecar subtitle URLs in VLC.
           video_activity = vlc / "application/vlc-android/src/org/videolan/vlc/gui/video/VideoPlayerActivity.kt"
           s = video_activity.read_text(encoding="utf-8")
-          old_vlc_load = "                subtitlesExtraPath = extras.getString(PLAY_EXTRA_SUBTITLES_LOCATION)\\n                if (!subtitlesExtraPath.isNullOrEmpty()) service.addSubtitleTrack(subtitlesExtraPath!!, true)"
-          new_vlc_load = "                subtitlesExtraPath = extras.getString(PLAY_EXTRA_SUBTITLES_LOCATION)\\n\\n                extras.getStringArray(\\\"tars_external_sub_urls\\\")\\n                    ?.asSequence()\\n                    ?.filter { it.isNotBlank() && it != subtitlesExtraPath }\\n                    ?.distinct()\\n                    ?.forEach { subtitleUrl ->\\n                        service.addSubtitleTrack(subtitleUrl, false)\\n                    }\\n\\n                if (!subtitlesExtraPath.isNullOrEmpty()) {\\n                    service.addSubtitleTrack(subtitlesExtraPath!!, true)\\n                }"
-          if old_vlc_load not in s:
-              raise SystemExit("VLC VideoPlayerActivity subtitle load block not found")
-          s = s.replace(old_vlc_load, new_vlc_load, 1)
-          video_activity.write_text(s, encoding="utf-8")
 
-          # Initialize the VLC runtime expected by StartActivity/VideoPlayerActivity.
+          old_vlc_load = "                subtitlesExtraPath = extras.getString(PLAY_EXTRA_SUBTITLES_LOCATION)\\n                if (!subtitlesExtraPath.isNullOrEmpty()) service.addSubtitleTrack(subtitlesExtraPath!!, true)"
+
+          new_vlc_load = "                subtitlesExtraPath = extras.getString(PLAY_EXTRA_SUBTITLES_LOCATION)\\n\\n                extras.getStringArray(\\\"tars_external_sub_urls\\\")\\n                    ?.asSequence()\\n                    ?.filter { it.isNotBlank() && it != subtitlesExtraPath }\\n                    ?.distinct()\\n                    ?.forEach { subtitleUrl ->\\n                        service.addSubtitleTrack(subtitleUrl, false)\\n                    }\\n\\n                if (!subtitlesExtraPath.isNullOrEmpty()) {\\n                    service.addSubtitleTrack(subtitlesExtraPath!!, true)\\n                }"
+
+          if old_vlc_load not in s:
+              raise SystemExit(
+                  "VLC VideoPlayerActivity subtitle load block not found"
+              )
+
+          s = s.replace(
+              old_vlc_load,
+              new_vlc_load,
+              1,
+          )
+
+          video_activity.write_text(
+              s,
+              encoding="utf-8",
+          )
+
+          # Initialize VLC runtime inside Jellyfin Application.
           app = upstream / "app/src/main/java/org/jellyfin/mobile/JellyfinApplication.kt"
           s = app.read_text(encoding="utf-8")
 
           import_anchor = "import org.videolan.resources.AppContextProvider\n"
+
           extra_imports = "import org.videolan.resources.AppContextProvider\nimport org.videolan.resources.VLCInstance\nimport org.videolan.tools.Settings\nimport org.videolan.libvlc.Dialog\nimport org.videolan.vlc.gui.helpers.NotificationHelper\nimport org.videolan.vlc.util.DialogDelegate\n"
+
           if "import org.videolan.tools.Settings" not in s:
               if import_anchor not in s:
-                  raise SystemExit("JellyfinApplication VLC import anchor not found")
-              s = s.replace(import_anchor, extra_imports, 1)
+                  raise SystemExit(
+                      "JellyfinApplication VLC import anchor not found"
+                  )
+
+              s = s.replace(
+                  import_anchor,
+                  extra_imports,
+                  1,
+              )
 
           factory_anchor = "        FactoryManager.registerFactory(ILibVLCFactory.factoryId, LibVLCFactory())\n"
-          runtime_init = "        FactoryManager.registerFactory(ILibVLCFactory.factoryId, LibVLCFactory())\n\n        // VLC Android requires Settings.device before Settings.showTvUi is read.\n        Settings.getInstance(this)\n        Settings.initPostMigration(this)\n        NotificationHelper.createNotificationChannels(this)\n\n        if (VLCInstance.testCompatibleCPU(this)) {\n            Dialog.setCallbacks(VLCInstance.getInstance(this), DialogDelegate)\n        }\n"
+
+          runtime_init = "        FactoryManager.registerFactory(ILibVLCFactory.factoryId, LibVLCFactory())\n\n        Settings.getInstance(this)\n        Settings.initPostMigration(this)\n        NotificationHelper.createNotificationChannels(this)\n\n        if (VLCInstance.testCompatibleCPU(this)) {\n            Dialog.setCallbacks(VLCInstance.getInstance(this), DialogDelegate)\n        }\n"
+
           if "Settings.getInstance(this)" not in s:
               if factory_anchor not in s:
-                  raise SystemExit("JellyfinApplication factory anchor not found")
-              s = s.replace(factory_anchor, runtime_init, 1)
+                  raise SystemExit(
+                      "JellyfinApplication factory anchor not found"
+                  )
 
-          app.write_text(s, encoding="utf-8")
+              s = s.replace(
+                  factory_anchor,
+                  runtime_init,
+                  1,
+              )
 
-          # Remove VLC's own launcher filter. StartActivity remains usable by
-          # TARSVideo, but it no longer creates a second launcher icon.
+          app.write_text(
+              s,
+              encoding="utf-8",
+          )
+
+          # Remove VLC secondary launcher icon.
           vlc_manifest = vlc / "application/vlc-android/AndroidManifest.xml"
           s = vlc_manifest.read_text(encoding="utf-8")
-          activity_pos = s.find('android:name=".StartActivity"')
-          if activity_pos == -1:
-              raise SystemExit("VLC StartActivity manifest entry not found")
-          filter_start = s.find("<intent-filter>", activity_pos)
-          filter_end = s.find("</intent-filter>", filter_start)
-          if filter_start == -1 or filter_end == -1:
-              raise SystemExit("VLC StartActivity launcher filter not found")
-          filter_end += len("</intent-filter>")
-          launcher_block = s[filter_start:filter_end]
-          if 'android.intent.action.MAIN' not in launcher_block or 'android.intent.category.LAUNCHER' not in launcher_block:
-              raise SystemExit("First VLC StartActivity filter is not launcher")
-          s = s[:filter_start] + s[filter_end:]
-          vlc_manifest.write_text(s, encoding="utf-8")
 
-          # 2) Force the fixed embedded VLC player even on upgrades where an
-          # older preference may still be stored.
+          activity_pos = s.find(
+              'android:name=".StartActivity"'
+          )
+
+          if activity_pos == -1:
+              raise SystemExit(
+                  "VLC StartActivity manifest entry not found"
+              )
+
+          filter_start = s.find(
+              "<intent-filter>",
+              activity_pos,
+          )
+
+          filter_end = s.find(
+              "</intent-filter>",
+              filter_start,
+          )
+
+          if filter_start == -1 or filter_end == -1:
+              raise SystemExit(
+                  "VLC StartActivity launcher filter not found"
+              )
+
+          filter_end += len("</intent-filter>")
+
+          launcher_block = s[
+              filter_start:filter_end
+          ]
+
+          if (
+              'android.intent.action.MAIN'
+              not in launcher_block
+              or
+              'android.intent.category.LAUNCHER'
+              not in launcher_block
+          ):
+              raise SystemExit(
+                  "First VLC StartActivity filter is not launcher"
+              )
+
+          s = (
+              s[:filter_start]
+              + s[filter_end:]
+          )
+
+          vlc_manifest.write_text(
+              s,
+              encoding="utf-8",
+          )
+
+          # Force VLC as video player.
           prefs = upstream / "app/src/main/java/org/jellyfin/mobile/app/AppPreferences.kt"
           s = prefs.read_text(encoding="utf-8")
+
           s, n = re.subn(
               r'(@VideoPlayerType\s+val videoPlayerType: String\s+get\(\) = )[^\n]+',
               r'\1VideoPlayerType.EXTERNAL_PLAYER',
               s,
               count=1,
           )
-          if n != 1:
-              raise SystemExit("AppPreferences videoPlayerType pattern not found")
-          prefs.write_text(s, encoding="utf-8")
 
-          # 3) Replace the Jellyfin player selector/options with one fixed
-          # TARSVideo VLC entry.
+          if n != 1:
+              raise SystemExit(
+                  "AppPreferences videoPlayerType pattern not found"
+              )
+
+          prefs.write_text(
+              s,
+              encoding="utf-8",
+          )
+
+          # Replace player settings with fixed TARSVideo VLC entry.
           settings = upstream / "app/src/main/java/org/jellyfin/mobile/settings/SettingsFragment.kt"
           s = settings.read_text(encoding="utf-8")
-          begin = s.find("        categoryHeader(PREF_CATEGORY_VIDEO_PLAYER)")
-          end = s.find("        val subtitleSettingsIntent", begin)
+
+          begin = s.find(
+              "        categoryHeader(PREF_CATEGORY_VIDEO_PLAYER)"
+          )
+
+          end = s.find(
+              "        val subtitleSettingsIntent",
+              begin,
+          )
+
           if begin == -1 or end == -1:
-              raise SystemExit("Settings video section boundaries not found")
+              raise SystemExit(
+                  "Settings video section boundaries not found"
+              )
+
           fixed_video = '''        categoryHeader(PREF_CATEGORY_VIDEO_PLAYER) {
               titleRes = R.string.pref_category_video_player
           }
+
           pref("tarsvideo_vlc_player") {
               title = "TARSVideo VLC"
               summary = "Player VLC integrado ao TARSVideo • Direct Play / Direct Stream"
           }
           '''
-          s = s[:begin] + fixed_video + s[end:]
-          settings.write_text(s, encoding="utf-8")
+
+          s = (
+              s[:begin]
+              + fixed_video
+              + s[end:]
+          )
+
+          settings.write_text(
+              s,
+              encoding="utf-8",
+          )
 
           for rel, title in [
-              ("app/src/main/res/values/strings.xml", "TARSVideo Settings"),
-              ("app/src/main/res/values-pt/strings.xml", "Configurações do TARSVideo"),
+              (
+                  "app/src/main/res/values/strings.xml",
+                  "TARSVideo Settings",
+              ),
+              (
+                  "app/src/main/res/values-pt/strings.xml",
+                  "Configurações do TARSVideo",
+              ),
           ]:
               p = upstream / rel
+
               if not p.exists():
                   continue
-              x = p.read_text(encoding="utf-8")
+
+              x = p.read_text(
+                  encoding="utf-8"
+              )
+
               x, n = re.subn(
                   r'<string name="activity_name_settings">.*?</string>',
                   f'<string name="activity_name_settings">{title}</string>',
                   x,
                   count=1,
               )
-              if n:
-                  p.write_text(x, encoding="utf-8")
 
-          # 4) Correct adaptive icon/splash sizing.
+              if n:
+                  p.write_text(
+                      x,
+                      encoding="utf-8",
+                  )
+
+          # Launcher foreground
           foreground = upstream / "app/src/main/res/drawable/tars_icon_foreground.xml"
+
           foreground.write_text(
               '''<?xml version="1.0" encoding="utf-8"?>
           <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
@@ -505,7 +718,9 @@ jobs:
               encoding="utf-8",
           )
 
+          # Adaptive launcher
           adaptive = upstream / "app/src/main/res/mipmap-anydpi-v26/tars_launcher.xml"
+
           adaptive.write_text(
               '''<?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -516,7 +731,9 @@ jobs:
               encoding="utf-8",
           )
 
+          # Legacy launcher
           legacy = upstream / "app/src/main/res/mipmap-anydpi/tars_launcher.xml"
+
           legacy.write_text(
               '''<?xml version="1.0" encoding="utf-8"?>
           <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
@@ -530,23 +747,37 @@ jobs:
           )
 
           styles = upstream / "app/src/main/res/values/styles.xml"
-          s = styles.read_text(encoding="utf-8").replace(
+          s = styles.read_text(
+              encoding="utf-8"
+          ).replace(
               "@drawable/tars_icon_padded",
               "@drawable/tars_icon_foreground",
           )
-          styles.write_text(s, encoding="utf-8")
+
+          styles.write_text(
+              s,
+              encoding="utf-8",
+          )
 
           web_layout = upstream / "app/src/main/res/layout/fragment_webview.xml"
-          s = web_layout.read_text(encoding="utf-8").replace(
+          s = web_layout.read_text(
+              encoding="utf-8"
+          ).replace(
               "@drawable/tars_icon_padded",
               "@drawable/tars_icon_foreground",
           )
-          web_layout.write_text(s, encoding="utf-8")
 
-          print("TARSVideo v0.3.4.8 fixes applied")
+          web_layout.write_text(
+              s,
+              encoding="utf-8",
+          )
+
+          print(
+              "TARSVideo v0.3.4.8.1 fixes applied"
+          )
           PY
 
-          echo "=== TARSVideo v0.3.4.8 patch done ==="
+          echo "=== TARSVideo v0.3.4.8.1 patch done ==="
 
       - name: Resolve Jellyfin VLC manifest conflicts
         run: |
@@ -555,8 +786,13 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          manifest = Path("upstream/app/src/main/AndroidManifest.xml")
-          text = manifest.read_text(encoding="utf-8")
+          manifest = Path(
+              "upstream/app/src/main/AndroidManifest.xml"
+          )
+
+          text = manifest.read_text(
+              encoding="utf-8"
+          )
 
           targets = [
               'android:name="com.google.android.gms.car.notification.SmallIcon"',
@@ -565,19 +801,42 @@ jobs:
 
           for target in targets:
               pos = text.find(target)
-              if pos == -1:
-                  raise SystemExit(f"Manifest metadata not found: {target}")
 
-              end = text.find("/>", pos)
+              if pos == -1:
+                  raise SystemExit(
+                      f"Manifest metadata not found: {target}"
+                  )
+
+              end = text.find(
+                  "/>",
+                  pos,
+              )
+
               if end == -1:
-                  raise SystemExit(f"Manifest metadata end not found: {target}")
+                  raise SystemExit(
+                      f"Manifest metadata end not found: {target}"
+                  )
 
               block = text[pos:end]
-              if 'tools:replace="android:resource"' not in block:
-                  text = text[:end] + '\n            tools:replace="android:resource"' + text[end:]
 
-          manifest.write_text(text, encoding="utf-8")
-          print("Jellyfin/VLC car metadata conflicts resolved")
+              if (
+                  'tools:replace="android:resource"'
+                  not in block
+              ):
+                  text = (
+                      text[:end]
+                      + '\n            tools:replace="android:resource"'
+                      + text[end:]
+                  )
+
+          manifest.write_text(
+              text,
+              encoding="utf-8",
+          )
+
+          print(
+              "Jellyfin/VLC car metadata conflicts resolved"
+          )
           PY
 
       - name: Verify embedded VLC dependency
@@ -592,13 +851,17 @@ jobs:
             > ../vlc-deps.txt
 
           echo "=== VLC dependency lines ==="
+
           grep -n \
             "org.videolan.tars:vlc-android\|libvlc-all\|medialibrary-all" \
             ../vlc-deps.txt \
             | head -80 \
             || true
 
-          if grep -q "org.videolan.tars:vlc-android:3.7.1 FAILED" ../vlc-deps.txt; then
+          if grep -q \
+            "org.videolan.tars:vlc-android:3.7.1 FAILED" \
+            ../vlc-deps.txt
+          then
             echo "ERROR: embedded VLC project substitution failed"
             exit 1
           fi
@@ -617,6 +880,7 @@ jobs:
       - name: Collect APK
         run: |
           set -e
+
           mkdir -p dist
 
           find upstream/app/build/outputs/apk \
@@ -637,15 +901,15 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.3.4.8-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.8.1-VLC-debug.apk
 
           ls -lh \
-            dist/TARSVideo-v0.3.4.8-VLC-debug.apk
+            dist/TARSVideo-v0.3.4.8.1-VLC-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.3.4.8-VLC
-          path: dist/TARSVideo-v0.3.4.8-VLC-debug.apk
+          name: TARSVideo-Android-v0.3.4.8.1-VLC
+          path: dist/TARSVideo-v0.3.4.8.1-VLC-debug.apk
           retention-days: 14
           if-no-files-found: error
