@@ -19,7 +19,10 @@ def replace_once(relative_path, old, new):
     )
 
 
+# ---------------------------------------------------------
 # Branding
+# ---------------------------------------------------------
+
 replace_once(
     "app/src/main/res/values/strings_donottranslate.xml",
     '<string name="app_name" translatable="false">Jellyfin</string>',
@@ -39,41 +42,129 @@ replace_once(
 )
 
 
+# ---------------------------------------------------------
+# app/build.gradle.kts
+# ---------------------------------------------------------
+
+gradle_path = root / "app/build.gradle.kts"
+gradle_text = gradle_path.read_text(encoding="utf-8")
+
+
 # Custom package ID
-replace_once(
-    "app/build.gradle.kts",
-    """defaultConfig {
-        minSdk""",
-    """defaultConfig {
+old_default_config = """    defaultConfig {
+        minSdk"""
+
+new_default_config = """    defaultConfig {
         applicationId = "br.seg.douglas.tarsvideo"
-        minSdk""",
+        minSdk"""
+
+if old_default_config not in gradle_text:
+    raise SystemExit(
+        "defaultConfig pattern not found"
+    )
+
+gradle_text = gradle_text.replace(
+    old_default_config,
+    new_default_config,
+    1,
 )
 
 
 # LibVLC dependency
-replace_once(
-    "app/build.gradle.kts",
-    "implementation(libs.libass.media)",
-    """implementation(libs.libass.media)
-    implementation("org.videolan.android:libvlc-all:3.7.5")""",
+old_libass = """    implementation(libs.libass.media)"""
+
+new_libass = """    implementation(libs.libass.media)
+    implementation("org.videolan.android:libvlc-all:3.7.5")"""
+
+if old_libass not in gradle_text:
+    raise SystemExit(
+        "libass dependency pattern not found"
+    )
+
+gradle_text = gradle_text.replace(
+    old_libass,
+    new_libass,
+    1,
+)
+
+
+# Resolve duplicate libc++_shared.so
+old_build_features = """    buildFeatures {
+        buildConfig = true
+        viewBinding = true
+        compose = true
+    }
+
+    compileOptions {"""
+
+new_build_features = """    buildFeatures {
+        buildConfig = true
+        viewBinding = true
+        compose = true
+    }
+
+    packaging {
+        jniLibs {
+            pickFirsts += "**/libc++_shared.so"
+        }
+    }
+
+    compileOptions {"""
+
+if old_build_features not in gradle_text:
+    raise SystemExit(
+        "buildFeatures pattern not found"
+    )
+
+gradle_text = gradle_text.replace(
+    old_build_features,
+    new_build_features,
+    1,
 )
 
 
 # APK name
-replace_once(
-    "app/build.gradle.kts",
-    'base.archivesName.set("jellyfin-android-v${project.getVersionName()}")',
-    'base.archivesName.set("TARSVideo-v${project.getVersionName()}")',
+old_archive_name = (
+    'base.archivesName.set('
+    '"jellyfin-android-v${project.getVersionName()}"'
+    ')'
+)
+
+new_archive_name = (
+    'base.archivesName.set('
+    '"TARSVideo-v${project.getVersionName()}"'
+    ')'
+)
+
+if old_archive_name not in gradle_text:
+    raise SystemExit(
+        "archive name pattern not found"
+    )
+
+gradle_text = gradle_text.replace(
+    old_archive_name,
+    new_archive_name,
+    1,
+)
+
+gradle_path.write_text(
+    gradle_text,
+    encoding="utf-8",
 )
 
 
-# Default video player
+# ---------------------------------------------------------
+# Default player = embedded VLC bridge
+# ---------------------------------------------------------
+
 preferences_path = (
     root
     / "app/src/main/java/org/jellyfin/mobile/app/AppPreferences.kt"
 )
 
-preferences_text = preferences_path.read_text(encoding="utf-8")
+preferences_text = preferences_path.read_text(
+    encoding="utf-8"
+)
 
 old_preference = (
     "get() = sharedPreferences.getString("
@@ -104,15 +195,23 @@ preferences_path.write_text(
 )
 
 
+# ---------------------------------------------------------
 # Settings default selection
+# ---------------------------------------------------------
+
 settings_path = (
     root
     / "app/src/main/java/org/jellyfin/mobile/settings/SettingsFragment.kt"
 )
 
-settings_text = settings_path.read_text(encoding="utf-8")
+settings_text = settings_path.read_text(
+    encoding="utf-8"
+)
 
-if "initialSelection = VideoPlayerType.EXO_PLAYER" in settings_text:
+if (
+    "initialSelection = VideoPlayerType.EXO_PLAYER"
+    in settings_text
+):
     settings_text = settings_text.replace(
         "initialSelection = VideoPlayerType.EXO_PLAYER",
         "initialSelection = VideoPlayerType.EXTERNAL_PLAYER",
@@ -125,13 +224,19 @@ settings_path.write_text(
 )
 
 
-# Redirect external-player bridge to embedded VLC Activity
+# ---------------------------------------------------------
+# Redirect Jellyfin external-player bridge
+# to our embedded VLC activity
+# ---------------------------------------------------------
+
 external_path = (
     root
     / "app/src/main/java/org/jellyfin/mobile/bridge/ExternalPlayer.kt"
 )
 
-external = external_path.read_text(encoding="utf-8")
+external = external_path.read_text(
+    encoding="utf-8"
+)
 
 import_anchor = (
     "import org.jellyfin.mobile.player.interaction.PlayOptions\n"
@@ -142,7 +247,11 @@ new_import = (
     "import org.jellyfin.mobile.player.vlc.InternalVlcPlayerActivity\n"
 )
 
-if "import org.jellyfin.mobile.player.vlc.InternalVlcPlayerActivity" not in external:
+if (
+    "import org.jellyfin.mobile.player.vlc."
+    "InternalVlcPlayerActivity"
+    not in external
+):
     if import_anchor not in external:
         raise SystemExit(
             "ExternalPlayer import anchor not found"
@@ -185,7 +294,10 @@ external_path.write_text(
 )
 
 
-# Register internal VLC Activity in AndroidManifest
+# ---------------------------------------------------------
+# Register internal VLC Activity
+# ---------------------------------------------------------
+
 manifest_path = (
     root
     / "app/src/main/AndroidManifest.xml"
@@ -229,4 +341,6 @@ manifest_path.write_text(
 )
 
 
-print("TARSVideo patch applied successfully")
+print(
+    "TARSVideo patch applied successfully"
+)
