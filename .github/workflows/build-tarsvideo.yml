@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.4.1 Native + TARS Chat
+name: Build TARSVideo Android v0.4.2 Native + TARS Chat
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Apply TARSVideo v0.4.1 patches
+      - name: Apply TARSVideo v0.4.2 patches
         run: |
           set -e
 
@@ -48,11 +48,11 @@ jobs:
 
           python3 ./patch_tarsvideo.py upstream
 
-      - name: Verify TARSVideo v0.4.1
+      - name: Verify TARSVideo v0.4.2
         run: |
           set -e
 
-          echo "===== TARSVideo v0.4.1 preflight ====="
+          echo "===== TARSVideo v0.4.2 preflight ====="
 
           grep -n \
             'applicationId = "br.seg.douglas.tarsvideo"' \
@@ -82,6 +82,18 @@ jobs:
             '<foreground android:drawable="@drawable/tars_icon"' \
             upstream/app/src/main/res/mipmap-anydpi-v26/tars_launcher.xml
 
+          grep -n \
+            'tarsvideo-hide-jellyfin-splash' \
+            upstream/app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt
+
+          if grep -n \
+            'androidx.compose.material.CircularProgressIndicator()' \
+            upstream/app/src/main/java/org/jellyfin/mobile/ui/screens/connect/ConnectScreen.kt
+          then
+            echo "ERROR: blue connection spinner is still active"
+            exit 1
+          fi
+
           if grep -n \
             'windowSplashScreenAnimatedIcon.*ic_splash' \
             upstream/app/src/main/res/values/styles.xml
@@ -106,6 +118,8 @@ jobs:
           echo "TARS_CHAT_WEBVIEW_READY=YES"
           echo "SYSTEM_SPLASH_ICON=REMOVED"
           echo "LAUNCHER_ICON_PADDING=REMOVED"
+          echo "CONNECT_SPINNER=REMOVED"
+          echo "JELLYFIN_WEB_SPLASH=HIDDEN_BEFORE_FADE_IN"
 
       - name: Build APK
         working-directory: upstream
@@ -137,13 +151,13 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.4.1-native-debug.apk
+            dist/TARSVideo-v0.4.2-native-debug.apk
 
           (
             cd dist
             sha256sum \
-              TARSVideo-v0.4.1-native-debug.apk \
-              > TARSVideo-v0.4.1-native-debug.apk.sha256
+              TARSVideo-v0.4.2-native-debug.apk \
+              > TARSVideo-v0.4.2-native-debug.apk.sha256
           )
 
           ls -lh dist/
@@ -151,9 +165,9 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.4.1-Native-TARSChat
+          name: TARSVideo-Android-v0.4.2-Native-TARSChat
           path: |
-            dist/TARSVideo-v0.4.1-native-debug.apk
-            dist/TARSVideo-v0.4.1-native-debug.apk.sha256
+            dist/TARSVideo-v0.4.2-native-debug.apk
+            dist/TARSVideo-v0.4.2-native-debug.apk.sha256
           retention-days: 14
           if-no-files-found: error
