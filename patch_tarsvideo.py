@@ -3,7 +3,7 @@ import sys
 
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("upstream")
 SERVER_URL = "https://video.douglas.seg.br"
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 
 
 def read(rel: str) -> str:
@@ -111,12 +111,9 @@ new_connect = f'''    androidx.compose.runtime.LaunchedEffect(Unit) {{
     }}
 
     Surface(color = MaterialTheme.colors.background) {{
-        androidx.compose.foundation.layout.Box(
+        androidx.compose.foundation.layout.Spacer(
             modifier = Modifier.fillMaxSize(),
-            contentAlignment = androidx.compose.ui.Alignment.Center,
-        ) {{
-            androidx.compose.material.CircularProgressIndicator()
-        }}
+        )
     }}'''
 if old_connect not in connect:
     raise SystemExit("ConnectScreen body pattern not found")
@@ -153,6 +150,35 @@ if "settings.applyDefault()" not in webview:
     raise SystemExit("WebView settings.applyDefault missing")
 if 'loadUrl("${server.hostname.trimEnd(\'/\')}/")' not in webview:
     raise SystemExit("WebView server loadUrl missing")
+
+# Hide/remove the Jellyfin Web bootstrap logo before the WebView is made visible.
+# This preserves the server web runtime, JavaScript Injector and TARS Chat.
+old_connected = '''                runOnUiThread {
+                    webViewBinding.loadingContainer.isVisible = false
+                    webView.fadeIn()
+                }'''
+new_connected = '''                runOnUiThread {
+                    webView.evaluateJavascript(
+                        """
+                        (() => {
+                            let style = document.getElementById('tarsvideo-hide-jellyfin-splash');
+                            if (!style) {
+                                style = document.createElement('style');
+                                style.id = 'tarsvideo-hide-jellyfin-splash';
+                                style.textContent = '.splashLogo{display:none!important;visibility:hidden!important;opacity:0!important}';
+                                (document.head || document.documentElement).appendChild(style);
+                            }
+                            document.querySelectorAll('.splashLogo').forEach((element) => element.remove());
+                        })();
+                        """.trimIndent(),
+                    ) {
+                        webViewBinding.loadingContainer.isVisible = false
+                        webView.fadeIn()
+                    }
+                }'''
+if old_connected not in webview:
+    raise SystemExit("WebView connected/fade-in anchor not found")
+webview = webview.replace(old_connected, new_connected, 1)
 
 old_listener = '''        webViewBinding!!.useDifferentServerButton.setOnClickListener {
             webView.removeCallbacks(timeoutRunnable)
@@ -308,4 +334,6 @@ print("PLAYER=JELLYFIN_NATIVE_EXOPLAYER")
 print("JAVASCRIPT_INJECTOR_COMPAT=YES")
 print("SYSTEM_SPLASH_ICON=REMOVED")
 print("LAUNCHER_ICON_PADDING=REMOVED")
+print("CONNECT_SPINNER=REMOVED")
+print("JELLYFIN_WEB_SPLASH=HIDDEN_BEFORE_FADE_IN")
 print(f"SERVER={SERVER_URL}")
