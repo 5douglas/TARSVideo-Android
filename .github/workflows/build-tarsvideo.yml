@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.4.0 Native + TARS Chat
+name: Build TARSVideo Android v0.4.1 Native + TARS Chat
 
 on:
   workflow_dispatch:
@@ -34,39 +34,68 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Apply TARSVideo v0.4 patches
+      - name: Apply TARSVideo v0.4.1 patches
         run: |
           set -e
 
           python3 -m py_compile patch_tarsvideo.py
 
-          mkdir -p             upstream/app/src/main/res/drawable-nodpi             upstream/app/src/main/res/drawable-720dpi
+          mkdir -p \
+            upstream/app/src/main/res/drawable-nodpi
 
-          cp ./tars_icon.png             upstream/app/src/main/res/drawable-nodpi/tars_icon.png
-
-          cp ./tars_icon.png             upstream/app/src/main/res/drawable-720dpi/tars_launcher_art.png
+          cp ./tars_icon.png \
+            upstream/app/src/main/res/drawable-nodpi/tars_icon.png
 
           python3 ./patch_tarsvideo.py upstream
 
-      - name: Verify native player and JavaScript Injector compatibility
+      - name: Verify TARSVideo v0.4.1
         run: |
           set -e
 
-          echo "===== TARSVideo v0.4 preflight ====="
+          echo "===== TARSVideo v0.4.1 preflight ====="
 
-          grep -n             'applicationId = "br.seg.douglas.tarsvideo"'             upstream/app/build.gradle.kts
+          grep -n \
+            'applicationId = "br.seg.douglas.tarsvideo"' \
+            upstream/app/build.gradle.kts
 
-          grep -n             'javaScriptEnabled = true'             upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
+          grep -n \
+            'javaScriptEnabled = true' \
+            upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
 
-          grep -n             'domStorageEnabled = true'             upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
+          grep -n \
+            'domStorageEnabled = true' \
+            upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
 
-          grep -n             'JavaScript Injector scripts'             upstream/app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt
+          grep -n \
+            'JavaScript Injector scripts' \
+            upstream/app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt
 
-          grep -n             'tarsvideo_native_player_v040'             upstream/app/src/main/java/org/jellyfin/mobile/JellyfinApplication.kt
+          grep -n \
+            'tarsvideo_native_player_v040' \
+            upstream/app/src/main/java/org/jellyfin/mobile/JellyfinApplication.kt
 
-          # Jellyfin official contains normal VLC external-player references.
-          # Only fail if old embedded-VLC dependencies are present.
-          if grep -n -E             'org\.videolan\.tars:vlc-android|vlc-android-source|libvlc-all|medialibrary-all'             upstream/app/build.gradle.kts             upstream/settings.gradle.kts
+          grep -n \
+            'windowSplashScreenAnimatedIcon.*tars_empty_splash' \
+            upstream/app/src/main/res/values/styles.xml
+
+          grep -n \
+            '<foreground android:drawable="@drawable/tars_icon"' \
+            upstream/app/src/main/res/mipmap-anydpi-v26/tars_launcher.xml
+
+          if grep -n \
+            'windowSplashScreenAnimatedIcon.*ic_splash' \
+            upstream/app/src/main/res/values/styles.xml
+          then
+            echo "ERROR: Jellyfin splash icon is still active"
+            exit 1
+          fi
+
+          # Jellyfin itself contains normal references to the external VLC app.
+          # Only reject dependencies/files from the old embedded-VLC integration.
+          if grep -n -E \
+            'org\.videolan\.tars:vlc-android|vlc-android-source|libvlc-all|medialibrary-all' \
+            upstream/app/build.gradle.kts \
+            upstream/settings.gradle.kts
           then
             echo "ERROR: stale embedded VLC dependency detected"
             exit 1
@@ -75,6 +104,8 @@ jobs:
           echo "PLAYER=JELLYFIN_NATIVE_EXOPLAYER"
           echo "JAVASCRIPT_INJECTOR_COMPAT=YES"
           echo "TARS_CHAT_WEBVIEW_READY=YES"
+          echo "SYSTEM_SPLASH_ICON=REMOVED"
+          echo "LAUNCHER_ICON_PADDING=REMOVED"
 
       - name: Build APK
         working-directory: upstream
@@ -82,7 +113,10 @@ jobs:
           set -e
           chmod +x gradlew
 
-          ./gradlew             assembleLibreDebug             --max-workers=2             --stacktrace
+          ./gradlew \
+            assembleLibreDebug \
+            --max-workers=2 \
+            --stacktrace
 
       - name: Collect APK
         run: |
@@ -91,7 +125,10 @@ jobs:
           mkdir -p dist
 
           APK="$(
-            find upstream/app/build/outputs/apk/libre/debug               -type f               -name '*.apk'               | head -n 1
+            find upstream/app/build/outputs/apk/libre/debug \
+              -type f \
+              -name '*.apk' \
+              | head -n 1
           )"
 
           if [ -z "$APK" ]; then
@@ -99,11 +136,14 @@ jobs:
             exit 1
           fi
 
-          cp "$APK"             dist/TARSVideo-v0.4.0-native-debug.apk
+          cp "$APK" \
+            dist/TARSVideo-v0.4.1-native-debug.apk
 
           (
             cd dist
-            sha256sum               TARSVideo-v0.4.0-native-debug.apk               > TARSVideo-v0.4.0-native-debug.apk.sha256
+            sha256sum \
+              TARSVideo-v0.4.1-native-debug.apk \
+              > TARSVideo-v0.4.1-native-debug.apk.sha256
           )
 
           ls -lh dist/
@@ -111,9 +151,9 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.4.0-Native-TARSChat
+          name: TARSVideo-Android-v0.4.1-Native-TARSChat
           path: |
-            dist/TARSVideo-v0.4.0-native-debug.apk
-            dist/TARSVideo-v0.4.0-native-debug.apk.sha256
+            dist/TARSVideo-v0.4.1-native-debug.apk
+            dist/TARSVideo-v0.4.1-native-debug.apk.sha256
           retention-days: 14
           if-no-files-found: error
