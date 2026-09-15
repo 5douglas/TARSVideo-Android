@@ -40,15 +40,11 @@ jobs:
 
           python3 -m py_compile patch_tarsvideo.py
 
-          mkdir -p \
-            upstream/app/src/main/res/drawable-nodpi \
-            upstream/app/src/main/res/drawable-720dpi
+          mkdir -p             upstream/app/src/main/res/drawable-nodpi             upstream/app/src/main/res/drawable-720dpi
 
-          cp ./tars_icon.png \
-            upstream/app/src/main/res/drawable-nodpi/tars_icon.png
+          cp ./tars_icon.png             upstream/app/src/main/res/drawable-nodpi/tars_icon.png
 
-          cp ./tars_icon.png \
-            upstream/app/src/main/res/drawable-720dpi/tars_launcher_art.png
+          cp ./tars_icon.png             upstream/app/src/main/res/drawable-720dpi/tars_launcher_art.png
 
           python3 ./patch_tarsvideo.py upstream
 
@@ -58,33 +54,21 @@ jobs:
 
           echo "===== TARSVideo v0.4 preflight ====="
 
-          grep -n \
-            'applicationId = "br.seg.douglas.tarsvideo"' \
-            upstream/app/build.gradle.kts
+          grep -n             'applicationId = "br.seg.douglas.tarsvideo"'             upstream/app/build.gradle.kts
 
-          grep -n \
-            'javaScriptEnabled = true' \
-            upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
+          grep -n             'javaScriptEnabled = true'             upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
 
-          grep -n \
-            'domStorageEnabled = true' \
-            upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
+          grep -n             'domStorageEnabled = true'             upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
 
-          grep -n \
-            'JavaScript Injector scripts' \
-            upstream/app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt
+          grep -n             'JavaScript Injector scripts'             upstream/app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt
 
-          grep -n \
-            'tarsvideo_native_player_v040' \
-            upstream/app/src/main/java/org/jellyfin/mobile/JellyfinApplication.kt
+          grep -n             'tarsvideo_native_player_v040'             upstream/app/src/main/java/org/jellyfin/mobile/JellyfinApplication.kt
 
-          if grep -R -n \
-            'org.videolan.vlc\|org.videolan.libvlc\|vlc-android-source' \
-            upstream/app/src/main \
-            upstream/app/build.gradle.kts \
-            upstream/settings.gradle.kts
+          # Jellyfin official contains normal VLC external-player references.
+          # Only fail if old embedded-VLC dependencies are present.
+          if grep -n -E             'org\.videolan\.tars:vlc-android|vlc-android-source|libvlc-all|medialibrary-all'             upstream/app/build.gradle.kts             upstream/settings.gradle.kts
           then
-            echo "ERROR: stale embedded VLC integration detected"
+            echo "ERROR: stale embedded VLC dependency detected"
             exit 1
           fi
 
@@ -98,10 +82,7 @@ jobs:
           set -e
           chmod +x gradlew
 
-          ./gradlew \
-            assembleLibreDebug \
-            --max-workers=2 \
-            --stacktrace
+          ./gradlew             assembleLibreDebug             --max-workers=2             --stacktrace
 
       - name: Collect APK
         run: |
@@ -110,10 +91,7 @@ jobs:
           mkdir -p dist
 
           APK="$(
-            find upstream/app/build/outputs/apk/libre/debug \
-              -type f \
-              -name '*.apk' \
-              | head -n 1
+            find upstream/app/build/outputs/apk/libre/debug               -type f               -name '*.apk'               | head -n 1
           )"
 
           if [ -z "$APK" ]; then
@@ -121,14 +99,11 @@ jobs:
             exit 1
           fi
 
-          cp "$APK" \
-            dist/TARSVideo-v0.4.0-native-debug.apk
+          cp "$APK"             dist/TARSVideo-v0.4.0-native-debug.apk
 
           (
             cd dist
-            sha256sum \
-              TARSVideo-v0.4.0-native-debug.apk \
-              > TARSVideo-v0.4.0-native-debug.apk.sha256
+            sha256sum               TARSVideo-v0.4.0-native-debug.apk               > TARSVideo-v0.4.0-native-debug.apk.sha256
           )
 
           ls -lh dist/
