@@ -38,7 +38,7 @@ jobs:
         run: |
           set -e
 
-          python3 -m py_compile patch_tarsvideo_v0_4.py
+          python3 -m py_compile patch_tarsvideo.py
 
           mkdir -p \
             upstream/app/src/main/res/drawable-nodpi \
@@ -50,7 +50,7 @@ jobs:
           cp ./tars_icon.png \
             upstream/app/src/main/res/drawable-720dpi/tars_launcher_art.png
 
-          python3 ./patch_tarsvideo_v0_4.py upstream
+          python3 ./patch_tarsvideo.py upstream
 
       - name: Verify native player and JavaScript Injector compatibility
         run: |
