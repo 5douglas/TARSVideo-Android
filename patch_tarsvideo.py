@@ -3,19 +3,20 @@ import sys
 
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("upstream")
 SERVER_URL = "https://video.douglas.seg.br"
+APP_VERSION = "0.4.0"
 
 
-def read(rel):
+def read(rel: str) -> str:
     return (root / rel).read_text(encoding="utf-8")
 
 
-def write(rel, text):
+def write(rel: str, text: str) -> None:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
 
-def replace_once(rel, old, new):
+def replace_once(rel: str, old: str, new: str) -> None:
     text = read(rel)
     if old not in text:
         raise SystemExit(f"Pattern not found in {rel}:\n{old}")
@@ -40,167 +41,45 @@ replace_once(
 )
 
 
-# Composite build: official VLC Android 3.7.1 UI
-settings_path = root / "settings.gradle.kts"
-settings = settings_path.read_text(encoding="utf-8")
-vlc_composite = '''
-includeBuild("../vlc-android-source") {
-    dependencySubstitution {
-        substitute(module("org.videolan.tars:vlc-android"))
-            .using(project(":application:vlc-android"))
-    }
-}
-'''
-if 'includeBuild("../vlc-android-source")' not in settings:
-    settings += "\n" + vlc_composite.strip() + "\n"
-settings_path.write_text(settings, encoding="utf-8")
-
-
-# App Gradle
-gradle_path = root / "app/build.gradle.kts"
-gradle = gradle_path.read_text(encoding="utf-8")
-old_default = """    defaultConfig {
-        minSdk"""
-new_default = """    defaultConfig {
-        applicationId = "br.seg.douglas.tarsvideo"
-        minSdk"""
+# Package/application identity and APK name
+gradle_rel = "app/build.gradle.kts"
+gradle = read(gradle_rel)
+old_default = "    defaultConfig {\n        minSdk"
+new_default = "    defaultConfig {\n        applicationId = \"br.seg.douglas.tarsvideo\"\n        minSdk"
 if old_default not in gradle:
     raise SystemExit("defaultConfig pattern not found")
 gradle = gradle.replace(old_default, new_default, 1)
-
-old_libass = "    implementation(libs.libass.media)"
-new_libass = '''    implementation(libs.libass.media)
-
-    // Full official VLC Android player UI (composite build)
-    implementation("org.videolan.tars:vlc-android:3.7.1")'''
-if old_libass not in gradle:
-    raise SystemExit("libass dependency pattern not found")
-gradle = gradle.replace(old_libass, new_libass, 1)
-
-old_features = """    buildFeatures {
-        buildConfig = true
-        viewBinding = true
-        compose = true
-    }
-
-    compileOptions {"""
-new_features = """    buildFeatures {
-        buildConfig = true
-        viewBinding = true
-        compose = true
-    }
-
-    packaging {
-        jniLibs {
-            pickFirsts += "**/libc++_shared.so"
-        }
-        resources {
-            pickFirsts += "META-INF/*"
-        }
-    }
-
-    compileOptions {"""
-if old_features not in gradle:
-    raise SystemExit("buildFeatures pattern not found")
-gradle = gradle.replace(old_features, new_features, 1)
-
 archive_old = 'base.archivesName.set("jellyfin-android-v${project.getVersionName()}")'
-archive_new = 'base.archivesName.set("TARSVideo-v0.3")'
+archive_new = f'base.archivesName.set("TARSVideo-v{APP_VERSION}")'
 if archive_old not in gradle:
     raise SystemExit("archive name pattern not found")
 gradle = gradle.replace(archive_old, archive_new, 1)
-gradle_path.write_text(gradle, encoding="utf-8")
+write(gradle_rel, gradle)
 
 
-# Default player = external bridge (which now points to embedded VLC)
-prefs_rel = "app/src/main/java/org/jellyfin/mobile/app/AppPreferences.kt"
-prefs = read(prefs_rel)
-old_pref = (
-    "get() = sharedPreferences.getString("
-    "Constants.PREF_VIDEO_PLAYER_TYPE, "
-    "VideoPlayerType.EXO_PLAYER)!!"
-)
-new_pref = (
-    "get() = sharedPreferences.getString("
-    "Constants.PREF_VIDEO_PLAYER_TYPE, "
-    "VideoPlayerType.EXTERNAL_PLAYER)!!"
-)
-if old_pref not in prefs:
-    raise SystemExit("Video player preference pattern not found")
-write(prefs_rel, prefs.replace(old_pref, new_pref, 1))
-
-settings_rel = "app/src/main/java/org/jellyfin/mobile/settings/SettingsFragment.kt"
-settings_text = read(settings_rel)
-settings_text = settings_text.replace(
-    "initialSelection = VideoPlayerType.EXO_PLAYER",
-    "initialSelection = VideoPlayerType.EXTERNAL_PLAYER",
-    1,
-)
-write(settings_rel, settings_text)
-
-
-# Jellyfin -> official VLC VideoPlayerActivity
-external_rel = "app/src/main/java/org/jellyfin/mobile/bridge/ExternalPlayer.kt"
-external = read(external_rel)
-anchor = "import org.jellyfin.mobile.player.interaction.PlayOptions\n"
-vlc_import = (
-    "import org.jellyfin.mobile.player.interaction.PlayOptions\n"
-    "import org.videolan.vlc.gui.video.VideoPlayerActivity\n"
-)
-if "import org.videolan.vlc.gui.video.VideoPlayerActivity" not in external:
-    if anchor not in external:
-        raise SystemExit("ExternalPlayer import anchor not found")
-    external = external.replace(anchor, vlc_import, 1)
-
-old_intent = '''val playerIntent = Intent(Intent.ACTION_VIEW).apply {
-            if (context.packageManager.isPackageInstalled(appPreferences.externalPlayerApp)) {
-                component = getComponent(appPreferences.externalPlayerApp)
-            }
-            setDataAndType(url.toUri(), "video/*")'''
-new_intent = '''val playerIntent = Intent(
-            context,
-            VideoPlayerActivity::class.java
-        ).apply {
-            action = Intent.ACTION_VIEW
-            setDataAndType(url.toUri(), "video/*")'''
-if old_intent not in external:
-    raise SystemExit("ExternalPlayer intent block not found")
-external = external.replace(old_intent, new_intent, 1)
-write(external_rel, external)
-
-
-# Initialize embedded VLC core inside TARSVideo Application
+# One-time migration from the old embedded-VLC build back to Jellyfin native.
 app_rel = "app/src/main/java/org/jellyfin/mobile/JellyfinApplication.kt"
 app = read(app_rel)
-import_anchor = "import android.webkit.WebView\n"
-imports = '''import android.webkit.WebView
-import org.videolan.libvlc.FactoryManager
-import org.videolan.libvlc.LibVLCFactory
-import org.videolan.libvlc.MediaFactory
-import org.videolan.libvlc.interfaces.ILibVLCFactory
-import org.videolan.libvlc.interfaces.IMediaFactory
-import org.videolan.resources.AppContextProvider
-'''
-if "import org.videolan.resources.AppContextProvider" not in app:
-    if import_anchor not in app:
-        raise SystemExit("JellyfinApplication import anchor not found")
-    app = app.replace(import_anchor, imports, 1)
-
-old_super = '''        super.onCreate()
-
-        // Setup logging'''
+old_super = "        super.onCreate()\n\n        // Setup logging"
 new_super = '''        super.onCreate()
 
-        // Initialize the embedded official VLC Android stack.
-        AppContextProvider.init(this)
-        FactoryManager.registerFactory(IMediaFactory.factoryId, MediaFactory())
-        FactoryManager.registerFactory(ILibVLCFactory.factoryId, LibVLCFactory())
+        // TARSVideo v0.4: migrate old VLC-based installs back to the
+        // official Jellyfin native player without resetting server/login data.
+        val tarsPreferences = getSharedPreferences(
+            "${packageName}_preferences",
+            android.content.Context.MODE_PRIVATE,
+        )
+        if (!tarsPreferences.getBoolean("tarsvideo_native_player_v040", false)) {
+            tarsPreferences.edit()
+                .remove("pref_video_player_type")
+                .putBoolean("tarsvideo_native_player_v040", true)
+                .apply()
+        }
 
         // Setup logging'''
 if old_super not in app:
     raise SystemExit("JellyfinApplication onCreate anchor not found")
-app = app.replace(old_super, new_super, 1)
-write(app_rel, app)
+write(app_rel, app.replace(old_super, new_super, 1))
 
 
 # Fixed TARSVideo server
@@ -243,45 +122,62 @@ if old_connect not in connect:
 write(connect_rel, connect.replace(old_connect, new_connect, 1))
 
 
-# Web app: no MultiServer capability => no Select Server menu
+# Remove Select Server capability from the web shell.
 native_shell_rel = "app/src/main/assets/native/nativeshell.js"
 native_shell = read(native_shell_rel)
-native_shell = native_shell.replace('    "multiserver",\n', "", 1)
-write(native_shell_rel, native_shell)
+if '    "multiserver",\n' not in native_shell:
+    raise SystemExit("nativeshell multiserver capability anchor not found")
+write(native_shell_rel, native_shell.replace('    "multiserver",\n', "", 1))
 
 
-# Native server-change fallback disabled + mask web loading logo
+# JavaScript Injector / TARS Chat compatibility checks.
+web_utils_rel = "app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt"
+web_utils = read(web_utils_rel)
+for required in ("javaScriptEnabled = true", "domStorageEnabled = true"):
+    if required not in web_utils:
+        raise SystemExit(f"WebView JavaScript compatibility missing: {required}")
+
+web_client_rel = "app/src/main/java/org/jellyfin/mobile/webapp/JellyfinWebViewClient.kt"
+web_client = read(web_client_rel)
+for required in (
+    'assetsPathHandler.inject("native/injectionScript.js")',
+    'path.contains("/native/")',
+):
+    if required not in web_client:
+        raise SystemExit(f"Jellyfin native web injection bridge missing: {required}")
+
 webview_rel = "app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt"
 webview = read(webview_rel)
+if "settings.applyDefault()" not in webview:
+    raise SystemExit("WebView settings.applyDefault missing")
+if 'loadUrl("${server.hostname.trimEnd(\'/\')}/")' not in webview:
+    raise SystemExit("WebView server loadUrl missing")
+
 old_listener = '''        webViewBinding!!.useDifferentServerButton.setOnClickListener {
             webView.removeCallbacks(timeoutRunnable)
             webView.stopLoading()
             webViewBinding!!.loadingContainer.isVisible = false
             onSelectServer(error = false)
         }'''
-new_listener = '''        webViewBinding!!.useDifferentServerButton.isVisible = false'''
 if old_listener not in webview:
     raise SystemExit("useDifferentServerButton listener pattern not found")
-webview = webview.replace(old_listener, new_listener, 1)
-
-old_connected = '''                runOnUiThread {
-                    webViewBinding.loadingContainer.isVisible = false
-                    webView.fadeIn()
-                }'''
-new_connected = '''                runOnUiThread {
-                    webViewBinding.loadingContainer.isVisible = true
-                    webView.postDelayed({
-                        webViewBinding?.loadingContainer?.isVisible = false
-                        webViewBinding?.webView?.fadeIn()
-                    }, 1400L)
-                }'''
-if old_connected not in webview:
-    raise SystemExit("WebView connected block not found")
-webview = webview.replace(old_connected, new_connected, 1)
+webview = webview.replace(
+    old_listener,
+    "        webViewBinding!!.useDifferentServerButton.isVisible = false",
+    1,
+)
+old_settings = "        settings.applyDefault()\n"
+new_settings = '''        // TARSVideo: keep the full server web runtime enabled so server-side
+        // JavaScript Injector scripts (including TARS Chat) run in this WebView.
+        settings.applyDefault()
+'''
+if old_settings not in webview:
+    raise SystemExit("WebView settings.applyDefault anchor not found")
+webview = webview.replace(old_settings, new_settings, 1)
 write(webview_rel, webview)
 
 
-# Native web loading overlay uses TARS icon
+# TARSVideo loading overlay
 fragment_rel = "app/src/main/res/layout/fragment_webview.xml"
 fragment = read(fragment_rel)
 fragment = fragment.replace(
@@ -322,16 +218,16 @@ fragment = fragment.replace(
 write(fragment_rel, fragment)
 
 
-# Adaptive launcher + splash padding
+# Launcher + splash icon
 write(
     "app/src/main/res/drawable/tars_icon_padded.xml",
     '''<?xml version="1.0" encoding="utf-8"?>
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
     android:drawable="@drawable/tars_icon"
-    android:insetLeft="18dp"
-    android:insetTop="18dp"
-    android:insetRight="18dp"
-    android:insetBottom="18dp" />
+    android:insetLeft="24dp"
+    android:insetTop="24dp"
+    android:insetRight="24dp"
+    android:insetBottom="24dp" />
 ''',
 )
 write(
@@ -363,25 +259,22 @@ write(
 
 manifest_rel = "app/src/main/AndroidManifest.xml"
 manifest = read(manifest_rel)
-manifest = manifest.replace(
-    'android:icon="@mipmap/ic_launcher"',
-    'android:icon="@mipmap/tars_launcher"',
-    1,
-)
-manifest = manifest.replace(
-    'android:roundIcon="@mipmap/ic_launcher_round"',
-    'android:roundIcon="@mipmap/tars_launcher"',
-    1,
-)
+if 'android:icon="@mipmap/ic_launcher"' not in manifest:
+    raise SystemExit("Manifest launcher icon anchor not found")
+manifest = manifest.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/tars_launcher"', 1)
+if 'android:roundIcon="@mipmap/ic_launcher_round"' not in manifest:
+    raise SystemExit("Manifest round launcher icon anchor not found")
+manifest = manifest.replace('android:roundIcon="@mipmap/ic_launcher_round"', 'android:roundIcon="@mipmap/tars_launcher"', 1)
 write(manifest_rel, manifest)
 
 styles_rel = "app/src/main/res/values/styles.xml"
 styles = read(styles_rel)
-styles = styles.replace(
-    '<item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>',
-    '<item name="windowSplashScreenAnimatedIcon">@drawable/tars_icon_padded</item>',
-    1,
-)
-write(styles_rel, styles)
+old_splash = '<item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>'
+if old_splash not in styles:
+    raise SystemExit("Splash icon anchor not found")
+write(styles_rel, styles.replace(old_splash, '<item name="windowSplashScreenAnimatedIcon">@drawable/tars_icon_padded</item>', 1))
 
-print("TARSVideo v0.3 patch applied successfully")
+print(f"TARSVideo Android v{APP_VERSION} patch applied successfully")
+print("PLAYER=JELLYFIN_NATIVE_EXOPLAYER")
+print("JAVASCRIPT_INJECTOR_COMPAT=YES")
+print(f"SERVER={SERVER_URL}")
