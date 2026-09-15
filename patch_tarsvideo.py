@@ -3,7 +3,7 @@ import sys
 
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("upstream")
 SERVER_URL = "https://video.douglas.seg.br"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 
 
 def read(rel: str) -> str:
@@ -49,6 +49,7 @@ new_default = "    defaultConfig {\n        applicationId = \"br.seg.douglas.tar
 if old_default not in gradle:
     raise SystemExit("defaultConfig pattern not found")
 gradle = gradle.replace(old_default, new_default, 1)
+
 archive_old = 'base.archivesName.set("jellyfin-android-v${project.getVersionName()}")'
 archive_new = f'base.archivesName.set("TARSVideo-v{APP_VERSION}")'
 if archive_old not in gradle:
@@ -166,6 +167,7 @@ webview = webview.replace(
     "        webViewBinding!!.useDifferentServerButton.isVisible = false",
     1,
 )
+
 old_settings = "        settings.applyDefault()\n"
 new_settings = '''        // TARSVideo: keep the full server web runtime enabled so server-side
         // JavaScript Injector scripts (including TARS Chat) run in this WebView.
@@ -177,7 +179,8 @@ webview = webview.replace(old_settings, new_settings, 1)
 write(webview_rel, webview)
 
 
-# TARSVideo loading overlay
+# TARSVideo loading overlay.
+# v0.4.1 uses the TARS artwork directly, without the old extra inset.
 fragment_rel = "app/src/main/res/layout/fragment_webview.xml"
 fragment = read(fragment_rel)
 fragment = fragment.replace(
@@ -185,6 +188,7 @@ fragment = fragment.replace(
     'android:visibility="visible"\n        tools:visibility="visible">',
     1,
 )
+
 old_progress = '''        <com.google.android.material.progressindicator.CircularProgressIndicator
             android:id="@+id/progress_indicator"
             android:layout_width="wrap_content"
@@ -196,20 +200,23 @@ old_progress = '''        <com.google.android.material.progressindicator.Circula
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent" />'''
+
 new_progress = '''        <ImageView
             android:id="@+id/progress_indicator"
             android:layout_width="132dp"
             android:layout_height="132dp"
             android:contentDescription="@string/app_name"
             android:scaleType="centerInside"
-            android:src="@drawable/tars_icon_padded"
+            android:src="@drawable/tars_icon"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent" />'''
+
 if old_progress not in fragment:
     raise SystemExit("WebView progress indicator pattern not found")
 fragment = fragment.replace(old_progress, new_progress, 1)
+
 fragment = fragment.replace(
     'android:text="@string/button_use_different_server"',
     'android:text="@string/button_use_different_server"\n            android:visibility="gone"',
@@ -218,18 +225,24 @@ fragment = fragment.replace(
 write(fragment_rel, fragment)
 
 
-# Launcher + splash icon
+# Launcher + Android splash.
+# v0.4.1:
+# - no Jellyfin/TARS logo in the Android system splash
+# - no extra 24dp inset around the launcher foreground
+# - TARS icon fills the adaptive icon area much better
 write(
-    "app/src/main/res/drawable/tars_icon_padded.xml",
+    "app/src/main/res/drawable/tars_empty_splash.xml",
     '''<?xml version="1.0" encoding="utf-8"?>
-<inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:drawable="@drawable/tars_icon"
-    android:insetLeft="24dp"
-    android:insetTop="24dp"
-    android:insetRight="24dp"
-    android:insetBottom="24dp" />
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <size
+        android:width="1dp"
+        android:height="1dp" />
+    <solid android:color="@android:color/transparent" />
+</shape>
 ''',
 )
+
 write(
     "app/src/main/res/values/tars_colors.xml",
     '''<?xml version="1.0" encoding="utf-8"?>
@@ -238,21 +251,23 @@ write(
 </resources>
 ''',
 )
+
 write(
     "app/src/main/res/mipmap-anydpi-v26/tars_launcher.xml",
     '''<?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/tars_launcher_background" />
-    <foreground android:drawable="@drawable/tars_icon_padded" />
+    <foreground android:drawable="@drawable/tars_icon" />
 </adaptive-icon>
 ''',
 )
+
 write(
     "app/src/main/res/mipmap-anydpi/tars_launcher.xml",
     '''<?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/tars_launcher_background" />
-    <item android:drawable="@drawable/tars_icon_padded" />
+    <item android:drawable="@drawable/tars_icon" />
 </layer-list>
 ''',
 )
@@ -261,20 +276,36 @@ manifest_rel = "app/src/main/AndroidManifest.xml"
 manifest = read(manifest_rel)
 if 'android:icon="@mipmap/ic_launcher"' not in manifest:
     raise SystemExit("Manifest launcher icon anchor not found")
-manifest = manifest.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/tars_launcher"', 1)
+manifest = manifest.replace(
+    'android:icon="@mipmap/ic_launcher"',
+    'android:icon="@mipmap/tars_launcher"',
+    1,
+)
+
 if 'android:roundIcon="@mipmap/ic_launcher_round"' not in manifest:
     raise SystemExit("Manifest round launcher icon anchor not found")
-manifest = manifest.replace('android:roundIcon="@mipmap/ic_launcher_round"', 'android:roundIcon="@mipmap/tars_launcher"', 1)
+manifest = manifest.replace(
+    'android:roundIcon="@mipmap/ic_launcher_round"',
+    'android:roundIcon="@mipmap/tars_launcher"',
+    1,
+)
 write(manifest_rel, manifest)
 
 styles_rel = "app/src/main/res/values/styles.xml"
 styles = read(styles_rel)
+
 old_splash = '<item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>'
+new_splash = '<item name="windowSplashScreenAnimatedIcon">@drawable/tars_empty_splash</item>'
 if old_splash not in styles:
     raise SystemExit("Splash icon anchor not found")
-write(styles_rel, styles.replace(old_splash, '<item name="windowSplashScreenAnimatedIcon">@drawable/tars_icon_padded</item>', 1))
+
+styles = styles.replace(old_splash, new_splash, 1)
+write(styles_rel, styles)
+
 
 print(f"TARSVideo Android v{APP_VERSION} patch applied successfully")
 print("PLAYER=JELLYFIN_NATIVE_EXOPLAYER")
 print("JAVASCRIPT_INJECTOR_COMPAT=YES")
+print("SYSTEM_SPLASH_ICON=REMOVED")
+print("LAUNCHER_ICON_PADDING=REMOVED")
 print(f"SERVER={SERVER_URL}")
