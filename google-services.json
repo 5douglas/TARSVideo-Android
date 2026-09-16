@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "721020184043",
+    "project_id": "videoserver-505914",
+    "storage_bucket": "videoserver-505914.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:721020184043:android:d7ab2644dc6ec70b2de5ae",
+        "android_client_info": {
+          "package_name": "tars.video"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAI5EcnMvLE2G1Y7kbFhKy1kHqJBwLaeDk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
