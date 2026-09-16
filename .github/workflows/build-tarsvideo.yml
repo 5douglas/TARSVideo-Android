@@ -34,12 +34,20 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Apply TARSVideo v0.4.3 patches
+      - name: Restore v0.4.2 base patch
         run: |
           set -e
 
+          curl -fL \
+            https://raw.githubusercontent.com/5douglas/TARSVideo-Android/a115b82ee67d44ca3ade866e2ae8c97020abb682/patch_tarsvideo.py \
+            -o patch_tarsvideo_base_v042.py
+
+          python3 -m py_compile patch_tarsvideo_base_v042.py
           python3 -m py_compile patch_tarsvideo.py
-          python3 -m py_compile patch_tarsvideo_v043.py
+
+      - name: Apply TARSVideo v0.4.3 patches
+        run: |
+          set -e
 
           mkdir -p \
             upstream/app/src/main/res/drawable-nodpi
@@ -47,8 +55,12 @@ jobs:
           cp ./tars_icon.png \
             upstream/app/src/main/res/drawable-nodpi/tars_icon.png
 
+          # Apply the last known-good full TARSVideo v0.4.2 patch first.
+          python3 ./patch_tarsvideo_base_v042.py upstream
+
+          # The repository's current patch_tarsvideo.py is the v0.4.3
+          # incremental patch: stable DeviceId + Android notifications.
           python3 ./patch_tarsvideo.py upstream
-          python3 ./patch_tarsvideo_v043.py upstream
 
       - name: Verify TARSVideo v0.4.3
         run: |
