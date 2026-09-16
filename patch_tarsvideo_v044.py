@@ -680,7 +680,7 @@ object TarsUpdater {{
 
         val manager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val request = DownloadManager.Request(Uri.parse(update.apkUrl))
-            .setTitle("TARSVideo ${update.versionName}")
+            .setTitle("TARSVideo ${{update.versionName}}")
             .setDescription("Baixando atualização")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setAllowedOverMetered(true)
