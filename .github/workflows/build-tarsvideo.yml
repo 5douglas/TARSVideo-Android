@@ -1,4 +1,4 @@
-name: Build TARSVideo Android v0.4.2 Native + TARS Chat
+name: Build TARSVideo Android v0.4.3 Native + TARS Chat + Notifications
 
 on:
   workflow_dispatch:
@@ -34,11 +34,12 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Apply TARSVideo v0.4.2 patches
+      - name: Apply TARSVideo v0.4.3 patches
         run: |
           set -e
 
           python3 -m py_compile patch_tarsvideo.py
+          python3 -m py_compile patch_tarsvideo_v043.py
 
           mkdir -p \
             upstream/app/src/main/res/drawable-nodpi
@@ -47,15 +48,20 @@ jobs:
             upstream/app/src/main/res/drawable-nodpi/tars_icon.png
 
           python3 ./patch_tarsvideo.py upstream
+          python3 ./patch_tarsvideo_v043.py upstream
 
-      - name: Verify TARSVideo v0.4.2
+      - name: Verify TARSVideo v0.4.3
         run: |
           set -e
 
-          echo "===== TARSVideo v0.4.2 preflight ====="
+          echo "===== TARSVideo v0.4.3 preflight ====="
 
           grep -n \
             'applicationId = "br.seg.douglas.tarsvideo"' \
+            upstream/app/build.gradle.kts
+
+          grep -n \
+            'base.archivesName.set("TARSVideo-v0.4.3")' \
             upstream/app/build.gradle.kts
 
           grep -n \
@@ -69,6 +75,40 @@ jobs:
           grep -n \
             'JavaScript Injector scripts' \
             upstream/app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt
+
+          grep -n \
+            'deviceInfo = baseDeviceInfo' \
+            upstream/app/src/main/java/org/jellyfin/mobile/app/ApiClientController.kt
+
+          if grep -n \
+            'baseDeviceInfo\.copy(id = baseDeviceInfo\.id +' \
+            upstream/app/src/main/java/org/jellyfin/mobile/app/ApiClientController.kt
+          then
+            echo "ERROR: duplicate Android DeviceId logic still present"
+            exit 1
+          fi
+
+          grep -n \
+            'fun showTarsNotification' \
+            upstream/app/src/main/java/org/jellyfin/mobile/bridge/NativeInterface.kt
+
+          grep -n \
+            'fun requestTarsNotificationPermission' \
+            upstream/app/src/main/java/org/jellyfin/mobile/bridge/NativeInterface.kt
+
+          grep -n \
+            '/native/tarsnotifications.js' \
+            upstream/app/src/main/assets/native/injectionScript.js
+
+          test -f \
+            upstream/app/src/main/assets/native/tarsnotifications.js
+
+          test -f \
+            upstream/app/src/main/res/drawable/tars_notification.xml
+
+          grep -n \
+            'android.permission.POST_NOTIFICATIONS' \
+            upstream/app/src/main/AndroidManifest.xml
 
           grep -n \
             'tarsvideo_native_player_v040' \
@@ -102,8 +142,6 @@ jobs:
             exit 1
           fi
 
-          # Jellyfin itself contains normal references to the external VLC app.
-          # Only reject dependencies/files from the old embedded-VLC integration.
           if grep -n -E \
             'org\.videolan\.tars:vlc-android|vlc-android-source|libvlc-all|medialibrary-all' \
             upstream/app/build.gradle.kts \
@@ -116,6 +154,10 @@ jobs:
           echo "PLAYER=JELLYFIN_NATIVE_EXOPLAYER"
           echo "JAVASCRIPT_INJECTOR_COMPAT=YES"
           echo "TARS_CHAT_WEBVIEW_READY=YES"
+          echo "ANDROID_DEVICE_ID_MODE=STABLE_BASE_DEVICE_ID"
+          echo "SYNCPLAY_DUPLICATE_SESSION_FIX=ENABLED"
+          echo "TARS_NATIVE_NOTIFICATION_BRIDGE=ENABLED"
+          echo "TARS_CHAT_NATIVE_NOTIFICATION_ADAPTER=ENABLED"
           echo "SYSTEM_SPLASH_ICON=REMOVED"
           echo "LAUNCHER_ICON_PADDING=REMOVED"
           echo "CONNECT_SPINNER=REMOVED"
@@ -151,13 +193,13 @@ jobs:
           fi
 
           cp "$APK" \
-            dist/TARSVideo-v0.4.2-native-debug.apk
+            dist/TARSVideo-v0.4.3-native-debug.apk
 
           (
             cd dist
             sha256sum \
-              TARSVideo-v0.4.2-native-debug.apk \
-              > TARSVideo-v0.4.2-native-debug.apk.sha256
+              TARSVideo-v0.4.3-native-debug.apk \
+              > TARSVideo-v0.4.3-native-debug.apk.sha256
           )
 
           ls -lh dist/
@@ -165,9 +207,9 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.4.2-Native-TARSChat
+          name: TARSVideo-Android-v0.4.3-Native-TARSChat-Notifications
           path: |
-            dist/TARSVideo-v0.4.2-native-debug.apk
-            dist/TARSVideo-v0.4.2-native-debug.apk.sha256
+            dist/TARSVideo-v0.4.3-native-debug.apk
+            dist/TARSVideo-v0.4.3-native-debug.apk.sha256
           retention-days: 14
           if-no-files-found: error
