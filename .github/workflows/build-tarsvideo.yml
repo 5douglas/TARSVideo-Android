@@ -1,24 +1,48 @@
-name: Build TARSVideo Android v0.4.3 Native + TARS Chat + Notifications
+name: Build TARSVideo Android v0.4.4 Release
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish GitHub Release v0.4.4
+        required: true
+        default: true
+        type: boolean
+
   push:
     branches:
       - main
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: tarsvideo-android-v0.4.4
+  cancel-in-progress: false
+
+env:
+  APP_VERSION: "0.4.4"
+  JELLYFIN_VERSION: "0.4.4"
+
+  EXPECTED_PACKAGE: "tars.video"
+  EXPECTED_VERSION_CODE: "40499"
+
+  EXPECTED_CERT_SHA256: >-
+    250a90fd90adb0245f89e45d64ce125ebec58ed1cff17d96f329dfeabeac53fc
 
 jobs:
+
   build:
+
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
+
       - name: Checkout TARSVideo
         uses: actions/checkout@v4
 
-      - name: Checkout Jellyfin Android
+      - name: Checkout pinned Jellyfin Android
         uses: actions/checkout@v4
         with:
           repository: jellyfin/jellyfin-android
@@ -34,7 +58,54 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Restore v0.4.2 base patch
+      - name: Verify repository inputs
+        shell: bash
+        run: |
+          set -e
+
+          test -f patch_tarsvideo.py
+          test -f patch_tarsvideo_v044.py
+          test -f google-services.json
+          test -f tars_icon.png
+
+          python3 -m py_compile patch_tarsvideo.py
+          python3 -m py_compile patch_tarsvideo_v044.py
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path("google-services.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          packages = {
+              client
+              .get("client_info", {})
+              .get("android_client_info", {})
+              .get("package_name")
+              for client in data.get("client", [])
+          }
+
+          packages.discard(None)
+
+          print(
+              "GOOGLE_SERVICES_PACKAGES="
+              + ",".join(sorted(packages))
+          )
+
+          if "tars.video" not in packages:
+              raise SystemExit(
+                  "google-services.json does not contain tars.video"
+              )
+
+          print("GOOGLE_SERVICES_PACKAGE_OK=YES")
+          PY
+
+      - name: Restore immutable v0.4.2 base patch
+        shell: bash
         run: |
           set -e
 
@@ -42,51 +113,70 @@ jobs:
             https://raw.githubusercontent.com/5douglas/TARSVideo-Android/a115b82ee67d44ca3ade866e2ae8c97020abb682/patch_tarsvideo.py \
             -o patch_tarsvideo_base_v042.py
 
-          python3 -m py_compile patch_tarsvideo_base_v042.py
-          python3 -m py_compile patch_tarsvideo.py
+          python3 -m py_compile \
+            patch_tarsvideo_base_v042.py
 
-      - name: Apply TARSVideo v0.4.3 patches
+      - name: Apply TARSVideo v0.4.4 patch chain
+        shell: bash
         run: |
           set -e
 
           mkdir -p \
             upstream/app/src/main/res/drawable-nodpi
 
-          cp ./tars_icon.png \
+          cp \
+            tars_icon.png \
             upstream/app/src/main/res/drawable-nodpi/tars_icon.png
 
-          # Apply the last known-good full TARSVideo v0.4.2 patch first.
-          python3 ./patch_tarsvideo_base_v042.py upstream
+          echo '===== APPLY v0.4.2 BASE ====='
+          python3 \
+            patch_tarsvideo_base_v042.py \
+            upstream
 
-          # The repository's current patch_tarsvideo.py is the v0.4.3
-          # incremental patch: stable DeviceId + Android notifications.
-          python3 ./patch_tarsvideo.py upstream
+          echo '===== APPLY v0.4.3 ====='
+          python3 \
+            patch_tarsvideo.py \
+            upstream
 
-      - name: Verify TARSVideo v0.4.3
+          echo '===== APPLY v0.4.4 ====='
+          python3 \
+            patch_tarsvideo_v044.py \
+            upstream
+
+          cp \
+            google-services.json \
+            upstream/app/google-services.json
+
+      - name: Verify patched source
+        shell: bash
         run: |
           set -e
 
-          echo "===== TARSVideo v0.4.3 preflight ====="
+          echo '===== SOURCE PREFLIGHT ====='
 
           grep -n \
-            'applicationId = "br.seg.douglas.tarsvideo"' \
+            'applicationId = "tars.video"' \
             upstream/app/build.gradle.kts
 
           grep -n \
-            'base.archivesName.set("TARSVideo-v0.4.3")' \
+            'base.archivesName.set("TARSVideo-v0.4.4")' \
             upstream/app/build.gradle.kts
 
           grep -n \
-            'javaScriptEnabled = true' \
-            upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
+            'com.google.gms.google-services' \
+            upstream/app/build.gradle.kts
 
           grep -n \
-            'domStorageEnabled = true' \
-            upstream/app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt
+            'com.google.firebase:firebase-messaging' \
+            upstream/app/build.gradle.kts
 
           grep -n \
-            'JavaScript Injector scripts' \
-            upstream/app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt
+            'TarsFirebaseMessagingService' \
+            upstream/app/src/main/AndroidManifest.xml
+
+          grep -n \
+            '/tars-chat/admin/push/register' \
+            upstream/app/src/main/java/org/jellyfin/mobile/tars/TarsPushManager.kt
 
           grep -n \
             'deviceInfo = baseDeviceInfo' \
@@ -96,132 +186,354 @@ jobs:
             'baseDeviceInfo\.copy(id = baseDeviceInfo\.id +' \
             upstream/app/src/main/java/org/jellyfin/mobile/app/ApiClientController.kt
           then
-            echo "ERROR: duplicate Android DeviceId logic still present"
-            exit 1
+              echo 'ERROR=DUPLICATE_DEVICE_ID_LOGIC'
+              exit 1
           fi
 
-          grep -n \
-            'fun showTarsNotification' \
-            upstream/app/src/main/java/org/jellyfin/mobile/bridge/NativeInterface.kt
-
-          grep -n \
-            'fun requestTarsNotificationPermission' \
-            upstream/app/src/main/java/org/jellyfin/mobile/bridge/NativeInterface.kt
-
-          grep -n \
-            '/native/tarsnotifications.js' \
+          if grep -n \
+            "'/native/tarsnotifications.js'" \
             upstream/app/src/main/assets/native/injectionScript.js
+          then
+              echo 'ERROR=CHAT_MESSAGE_PUSH_STILL_ENABLED'
+              exit 1
+          fi
+
+          if grep -R -n \
+            'br\.seg\.douglas\.tarsvideo' \
+            upstream/app/build.gradle.kts \
+            upstream/app/src/main/AndroidManifest.xml
+          then
+              echo 'ERROR=OLD_APPLICATION_ID'
+              exit 1
+          fi
 
           test -f \
-            upstream/app/src/main/assets/native/tarsnotifications.js
+            upstream/app/google-services.json
+
+          test -f \
+            upstream/app/src/main/java/org/jellyfin/mobile/tars/TarsPushManager.kt
+
+          test -f \
+            upstream/app/src/main/java/org/jellyfin/mobile/tars/TarsFirebaseMessagingService.kt
+
+          test -f \
+            upstream/app/src/main/java/org/jellyfin/mobile/tars/TarsUpdater.kt
+
+          test -f \
+            upstream/app/src/main/res/xml/tars_update_paths.xml
 
           test -f \
             upstream/app/src/main/res/drawable/tars_notification.xml
 
-          grep -n \
-            'android.permission.POST_NOTIFICATIONS' \
-            upstream/app/src/main/AndroidManifest.xml
+          echo 'APPLICATION_ID=tars.video'
+          echo 'FCM_ADMIN_PUSH=YES'
+          echo 'CHAT_MESSAGE_PUSH=NO'
+          echo 'SYNCPLAY_DEVICE_ID_FIX=YES'
+          echo 'IN_APP_UPDATER=YES'
 
-          grep -n \
-            'tarsvideo_native_player_v040' \
-            upstream/app/src/main/java/org/jellyfin/mobile/JellyfinApplication.kt
+      - name: Prepare release signing key
+        shell: bash
+        env:
+          TARSVIDEO_KEYSTORE_BASE64: >-
+            ${{ secrets.TARSVIDEO_KEYSTORE_BASE64 }}
 
-          grep -n \
-            'windowSplashScreenAnimatedIcon.*tars_empty_splash' \
-            upstream/app/src/main/res/values/styles.xml
+          TARSVIDEO_KEYSTORE_PASSWORD: >-
+            ${{ secrets.TARSVIDEO_KEYSTORE_PASSWORD }}
 
-          grep -n \
-            '<foreground android:drawable="@drawable/tars_icon"' \
-            upstream/app/src/main/res/mipmap-anydpi-v26/tars_launcher.xml
+          TARSVIDEO_KEY_ALIAS: >-
+            ${{ secrets.TARSVIDEO_KEY_ALIAS }}
 
-          grep -n \
-            'tarsvideo-hide-jellyfin-splash' \
-            upstream/app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt
+          TARSVIDEO_KEY_PASSWORD: >-
+            ${{ secrets.TARSVIDEO_KEY_PASSWORD }}
 
-          if grep -n \
-            'androidx.compose.material.CircularProgressIndicator()' \
-            upstream/app/src/main/java/org/jellyfin/mobile/ui/screens/connect/ConnectScreen.kt
-          then
-            echo "ERROR: blue connection spinner is still active"
-            exit 1
-          fi
-
-          if grep -n \
-            'windowSplashScreenAnimatedIcon.*ic_splash' \
-            upstream/app/src/main/res/values/styles.xml
-          then
-            echo "ERROR: Jellyfin splash icon is still active"
-            exit 1
-          fi
-
-          if grep -n -E \
-            'org\.videolan\.tars:vlc-android|vlc-android-source|libvlc-all|medialibrary-all' \
-            upstream/app/build.gradle.kts \
-            upstream/settings.gradle.kts
-          then
-            echo "ERROR: stale embedded VLC dependency detected"
-            exit 1
-          fi
-
-          echo "PLAYER=JELLYFIN_NATIVE_EXOPLAYER"
-          echo "JAVASCRIPT_INJECTOR_COMPAT=YES"
-          echo "TARS_CHAT_WEBVIEW_READY=YES"
-          echo "ANDROID_DEVICE_ID_MODE=STABLE_BASE_DEVICE_ID"
-          echo "SYNCPLAY_DUPLICATE_SESSION_FIX=ENABLED"
-          echo "TARS_NATIVE_NOTIFICATION_BRIDGE=ENABLED"
-          echo "TARS_CHAT_NATIVE_NOTIFICATION_ADAPTER=ENABLED"
-          echo "SYSTEM_SPLASH_ICON=REMOVED"
-          echo "LAUNCHER_ICON_PADDING=REMOVED"
-          echo "CONNECT_SPINNER=REMOVED"
-          echo "JELLYFIN_WEB_SPLASH=HIDDEN_BEFORE_FADE_IN"
-
-      - name: Build APK
-        working-directory: upstream
         run: |
           set -e
+
+          for value in \
+            "$TARSVIDEO_KEYSTORE_BASE64" \
+            "$TARSVIDEO_KEYSTORE_PASSWORD" \
+            "$TARSVIDEO_KEY_ALIAS" \
+            "$TARSVIDEO_KEY_PASSWORD"
+          do
+              if [ -z "$value" ]; then
+                  echo 'ERROR=MISSING_SIGNING_SECRET'
+                  exit 1
+              fi
+          done
+
+          KEYSTORE="$RUNNER_TEMP/tarsvideo-release.p12"
+
+          printf '%s' \
+            "$TARSVIDEO_KEYSTORE_BASE64" \
+            | base64 -d \
+            > "$KEYSTORE"
+
+          chmod 600 "$KEYSTORE"
+
+          test -s "$KEYSTORE"
+
+          echo 'KEYSTORE_READY=YES'
+          echo 'SECRET_CONTENT_PRINTED=NO'
+
+      - name: Build signed Libre Release APK
+        working-directory: upstream
+        shell: bash
+
+        env:
+          KEYSTORE_FILE: >-
+            ${{ runner.temp }}/tarsvideo-release.p12
+
+          KEYSTORE_PASSWORD: >-
+            ${{ secrets.TARSVIDEO_KEYSTORE_PASSWORD }}
+
+          SIGNING_KEY_ALIAS: >-
+            ${{ secrets.TARSVIDEO_KEY_ALIAS }}
+
+          SIGNING_KEY_PASSWORD: >-
+            ${{ secrets.TARSVIDEO_KEY_PASSWORD }}
+
+        run: |
+          set -e
+
           chmod +x gradlew
 
           ./gradlew \
-            assembleLibreDebug \
+            assembleLibreRelease \
             --max-workers=2 \
             --stacktrace
 
-      - name: Collect APK
+      - name: Collect and verify signed APK
+        id: apk
+        shell: bash
         run: |
           set -e
 
           mkdir -p dist
 
           APK="$(
-            find upstream/app/build/outputs/apk/libre/debug \
-              -type f \
-              -name '*.apk' \
-              | head -n 1
+              find \
+                upstream/app/build/outputs/apk/libre/release \
+                -type f \
+                -name '*.apk' \
+                | head -n 1
           )"
 
           if [ -z "$APK" ]; then
-            echo "No APK found"
-            exit 1
+              echo 'ERROR=APK_NOT_FOUND'
+              exit 1
           fi
 
-          cp "$APK" \
-            dist/TARSVideo-v0.4.3-native-debug.apk
+          OUT="dist/TARSVideo-v${APP_VERSION}.apk"
+
+          cp "$APK" "$OUT"
+
+          BUILD_TOOLS="$(
+              find "$ANDROID_SDK_ROOT/build-tools" \
+                -mindepth 1 \
+                -maxdepth 1 \
+                -type d \
+                | sort -V \
+                | tail -n 1
+          )"
+
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          AAPT="$BUILD_TOOLS/aapt"
+
+          test -x "$APKSIGNER"
+          test -x "$AAPT"
+
+          "$APKSIGNER" verify \
+            --verbose \
+            --print-certs \
+            "$OUT" \
+            | tee dist/apksigner.txt
+
+          CERT_SHA="$(
+              sed -n \
+                's/^Signer #1 certificate SHA-256 digest: //p' \
+                dist/apksigner.txt \
+                | head -n 1 \
+                | tr '[:upper:]' '[:lower:]' \
+                | tr -d ':'
+          )"
+
+          echo "CERT_SHA256=$CERT_SHA"
+
+          if [ "$CERT_SHA" != "$EXPECTED_CERT_SHA256" ]; then
+              echo 'ERROR=UNEXPECTED_SIGNING_CERTIFICATE'
+              exit 1
+          fi
+
+          BADGING="$(
+              "$AAPT" dump badging "$OUT"
+          )"
+
+          PACKAGE_NAME="$(
+              printf '%s\n' "$BADGING" \
+                | sed -n \
+                  "s/^package: name='\([^']*\)'.*/\1/p" \
+                | head -n 1
+          )"
+
+          VERSION_CODE="$(
+              printf '%s\n' "$BADGING" \
+                | sed -n \
+                  "s/^package:.*versionCode='\([^']*\)'.*/\1/p" \
+                | head -n 1
+          )"
+
+          VERSION_NAME="$(
+              printf '%s\n' "$BADGING" \
+                | sed -n \
+                  "s/^package:.*versionName='\([^']*\)'.*/\1/p" \
+                | head -n 1
+          )"
+
+          echo "PACKAGE_NAME=$PACKAGE_NAME"
+          echo "VERSION_CODE=$VERSION_CODE"
+          echo "VERSION_NAME=$VERSION_NAME"
+
+          test \
+            "$PACKAGE_NAME" = \
+            "$EXPECTED_PACKAGE"
+
+          test \
+            "$VERSION_CODE" = \
+            "$EXPECTED_VERSION_CODE"
+
+          test \
+            "$VERSION_NAME" = \
+            "$APP_VERSION"
+
+          APK_SHA="$(
+              sha256sum "$OUT" \
+                | awk '{print $1}'
+          )"
 
           (
-            cd dist
-            sha256sum \
-              TARSVideo-v0.4.3-native-debug.apk \
-              > TARSVideo-v0.4.3-native-debug.apk.sha256
+              cd dist
+
+              sha256sum \
+                "TARSVideo-v${APP_VERSION}.apk" \
+                > "TARSVideo-v${APP_VERSION}.apk.sha256"
           )
 
-          ls -lh dist/
+          export APK_SHA
+          export VERSION_CODE
 
-      - name: Upload APK
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ["APP_VERSION"]
+          version_code = int(
+              os.environ["VERSION_CODE"]
+          )
+          sha256 = os.environ["APK_SHA"]
+
+          manifest = {
+              "versionName": version,
+              "versionCode": version_code,
+              "apkUrl": (
+                  "https://github.com/"
+                  "5douglas/TARSVideo-Android/"
+                  f"releases/download/v{version}/"
+                  f"TARSVideo-v{version}.apk"
+              ),
+              "sha256": sha256,
+              "releaseNotes": (
+                  "Notificações administrativas FCM, "
+                  "correção SyncPlay/DeviceId, "
+                  "pacote permanente tars.video "
+                  "e atualizador interno."
+              ),
+          }
+
+          Path(
+              "dist/update.json"
+          ).write_text(
+              json.dumps(
+                  manifest,
+                  ensure_ascii=False,
+                  indent=2,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          echo "apk_path=$OUT" \
+            >> "$GITHUB_OUTPUT"
+
+          echo "apk_sha=$APK_SHA" \
+            >> "$GITHUB_OUTPUT"
+
+          echo "version_code=$VERSION_CODE" \
+            >> "$GITHUB_OUTPUT"
+
+          echo 'APK_SIGNATURE=VALID'
+          echo 'APK_PACKAGE=VALID'
+          echo 'APK_VERSION=VALID'
+          echo "APK_SHA256=$APK_SHA"
+
+      - name: Upload verified APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.4.3-Native-TARSChat-Notifications
+          name: TARSVideo-Android-v0.4.4-Signed-Release
           path: |
-            dist/TARSVideo-v0.4.3-native-debug.apk
-            dist/TARSVideo-v0.4.3-native-debug.apk.sha256
-          retention-days: 14
+            dist/TARSVideo-v0.4.4.apk
+            dist/TARSVideo-v0.4.4.apk.sha256
+            dist/update.json
+            dist/apksigner.txt
+          retention-days: 30
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch'
+              && inputs.publish_release }}
+
+        shell: bash
+
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+        run: |
+          set -e
+
+          TAG="v${APP_VERSION}"
+
+          if gh release view \
+              "$TAG" \
+              >/dev/null 2>&1
+          then
+
+              gh release upload \
+                "$TAG" \
+                "dist/TARSVideo-v${APP_VERSION}.apk" \
+                "dist/TARSVideo-v${APP_VERSION}.apk.sha256" \
+                dist/update.json \
+                --clobber
+
+              gh release edit \
+                "$TAG" \
+                --title "TARSVideo v${APP_VERSION}" \
+                --notes \
+                  "FCM administrativo, SyncPlay/DeviceId estável, pacote tars.video e atualizador interno."
+
+          else
+
+              gh release create \
+                "$TAG" \
+                "dist/TARSVideo-v${APP_VERSION}.apk" \
+                "dist/TARSVideo-v${APP_VERSION}.apk.sha256" \
+                dist/update.json \
+                --target "$GITHUB_SHA" \
+                --title "TARSVideo v${APP_VERSION}" \
+                --notes \
+                  "FCM administrativo, SyncPlay/DeviceId estável, pacote tars.video e atualizador interno."
+
+          fi
+
+          echo "GITHUB_RELEASE=$TAG"
+          echo 'UPDATE_MANIFEST_PUBLISHED=YES'
