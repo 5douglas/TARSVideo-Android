@@ -350,7 +350,7 @@ jobs:
 
           CERT_SHA="$(
               sed -n \
-                's/^Signer #1 certificate SHA-256 digest: //p' \
+                's/^.*certificate SHA-256 digest: //p' \
                 dist/apksigner.txt \
                 | head -n 1 \
                 | tr '[:upper:]' '[:lower:]' \
