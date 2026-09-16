@@ -2,8 +2,7 @@ from pathlib import Path
 import sys
 
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("upstream")
-SERVER_URL = "https://video.douglas.seg.br"
-APP_VERSION = "0.4.2"
+APP_VERSION = "0.4.3"
 
 
 def read(rel: str) -> str:
@@ -16,324 +15,486 @@ def write(rel: str, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def replace_once(rel: str, old: str, new: str) -> None:
-    text = read(rel)
-    if old not in text:
-        raise SystemExit(f"Pattern not found in {rel}:\n{old}")
-    write(rel, text.replace(old, new, 1))
+# ============================================================
+# TARSVideo v0.4.3
+# - stable Android DeviceId for Jellyfin 12 session identity
+# - native Android notifications for TARS Chat while WebView is alive
+# ============================================================
 
-
-# Branding
-replace_once(
-    "app/src/main/res/values/strings_donottranslate.xml",
-    '<string name="app_name" translatable="false">Jellyfin</string>',
-    '<string name="app_name" translatable="false">TARSVideo</string>',
-)
-replace_once(
-    "app/src/main/res/values/strings_donottranslate.xml",
-    '<string name="app_name_short" translatable="false">Jellyfin</string>',
-    '<string name="app_name_short" translatable="false">TARSVideo</string>',
-)
-replace_once(
-    "app/src/debug/res/values/strings_donottranslate.xml",
-    '<string name="app_name" translatable="false">Jellyfin Debug</string>',
-    '<string name="app_name" translatable="false">TARSVideo</string>',
-)
-
-
-# Package/application identity and APK name
+# APK/archive version produced by the base v0.4.2 patch.
 gradle_rel = "app/build.gradle.kts"
 gradle = read(gradle_rel)
-old_default = "    defaultConfig {\n        minSdk"
-new_default = "    defaultConfig {\n        applicationId = \"br.seg.douglas.tarsvideo\"\n        minSdk"
-if old_default not in gradle:
-    raise SystemExit("defaultConfig pattern not found")
-gradle = gradle.replace(old_default, new_default, 1)
-
-archive_old = 'base.archivesName.set("jellyfin-android-v${project.getVersionName()}")'
-archive_new = f'base.archivesName.set("TARSVideo-v{APP_VERSION}")'
-if archive_old not in gradle:
-    raise SystemExit("archive name pattern not found")
-gradle = gradle.replace(archive_old, archive_new, 1)
+if 'base.archivesName.set("TARSVideo-v0.4.2")' not in gradle:
+    raise SystemExit("TARSVideo v0.4.2 archive anchor not found")
+gradle = gradle.replace(
+    'base.archivesName.set("TARSVideo-v0.4.2")',
+    f'base.archivesName.set("TARSVideo-v{APP_VERSION}")',
+    1,
+)
 write(gradle_rel, gradle)
 
 
-# One-time migration from the old embedded-VLC build back to Jellyfin native.
-app_rel = "app/src/main/java/org/jellyfin/mobile/JellyfinApplication.kt"
-app = read(app_rel)
-old_super = "        super.onCreate()\n\n        // Setup logging"
-new_super = '''        super.onCreate()
+# ------------------------------------------------------------
+# Session identity fix
+# ------------------------------------------------------------
+api_rel = "app/src/main/java/org/jellyfin/mobile/app/ApiClientController.kt"
+api = read(api_rel)
 
-        // TARSVideo v0.4: migrate old VLC-based installs back to the
-        // official Jellyfin native player without resetting server/login data.
-        val tarsPreferences = getSharedPreferences(
-            "${packageName}_preferences",
-            android.content.Context.MODE_PRIVATE,
+old_configure = '''    private fun configureApiClientUser(userId: UUID, accessToken: String) {
+        apiClient.update(
+            accessToken = accessToken,
+            // Append user id to device id to ensure uniqueness across sessions
+            deviceInfo = baseDeviceInfo.copy(id = baseDeviceInfo.id + userId),
         )
-        if (!tarsPreferences.getBoolean("tarsvideo_native_player_v040", false)) {
-            tarsPreferences.edit()
-                .remove("pref_video_player_type")
-                .putBoolean("tarsvideo_native_player_v040", true)
-                .apply()
+    }'''
+
+new_configure = '''    private fun configureApiClientUser(userId: UUID, accessToken: String) {
+        apiClient.update(
+            accessToken = accessToken,
+            // TARSVideo/Jellyfin 12: the server SessionKey already includes UserId.
+            // Keep one stable DeviceId so WebView/native paths share one session.
+            deviceInfo = baseDeviceInfo,
+        )
+    }'''
+
+if old_configure not in api:
+    raise SystemExit("ApiClientController configureApiClientUser anchor not found")
+api = api.replace(old_configure, new_configure, 1)
+
+old_secondary = '''            deviceInfo = baseDeviceInfo.copy(id = baseDeviceInfo.id + serverUser.user.userId),'''
+new_secondary = '''            // TARSVideo/Jellyfin 12: keep the same stable physical-device id.
+            deviceInfo = baseDeviceInfo,'''''
+
+if old_secondary not in api:
+    raise SystemExit("ApiClientController getApiClient DeviceId anchor not found")
+api = api.replace(old_secondary, new_secondary, 1)
+write(api_rel, api)
+
+
+# ------------------------------------------------------------
+# Native Android notification bridge
+# ------------------------------------------------------------
+native_rel = "app/src/main/java/org/jellyfin/mobile/bridge/NativeInterface.kt"
+native = read(native_rel)
+
+old_imports = '''import android.annotation.SuppressLint
+import android.content.Context
+import android.content.Intent
+import android.media.session.PlaybackState
+import android.webkit.JavascriptInterface
+import androidx.core.content.ContextCompat'''
+
+new_imports = '''import android.Manifest
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.media.session.PlaybackState
+import android.os.Build
+import android.webkit.JavascriptInterface
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat'''
+
+if old_imports not in native:
+    raise SystemExit("NativeInterface import anchor not found")
+native = native.replace(old_imports, new_imports, 1)
+
+old_project_imports = '''import org.jellyfin.mobile.BuildConfig
+import org.jellyfin.mobile.events.ActivityEvent'''
+
+new_project_imports = '''import org.jellyfin.mobile.BuildConfig
+import org.jellyfin.mobile.MainActivity
+import org.jellyfin.mobile.R
+import org.jellyfin.mobile.events.ActivityEvent'''
+
+if old_project_imports not in native:
+    raise SystemExit("NativeInterface project import anchor not found")
+native = native.replace(old_project_imports, new_project_imports, 1)
+
+old_utils_import = '''import org.jellyfin.mobile.utils.Constants.EXTRA_TITLE
+import org.jellyfin.mobile.webapp.RemotePlayerService'''
+
+new_utils_import = '''import org.jellyfin.mobile.utils.Constants.EXTRA_TITLE
+import org.jellyfin.mobile.utils.requestPermission
+import org.jellyfin.mobile.webapp.RemotePlayerService'''
+
+if old_utils_import not in native:
+    raise SystemExit("NativeInterface requestPermission import anchor not found")
+native = native.replace(old_utils_import, new_utils_import, 1)
+
+notification_methods = r'''
+    @JavascriptInterface
+    fun requestTarsNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return true
         }
 
-        // Setup logging'''
-if old_super not in app:
-    raise SystemExit("JellyfinApplication onCreate anchor not found")
-write(app_rel, app.replace(old_super, new_super, 1))
-
-
-# Fixed TARSVideo server
-connect_rel = "app/src/main/java/org/jellyfin/mobile/ui/screens/connect/ConnectScreen.kt"
-connect = read(connect_rel)
-old_connect = '''    Surface(color = MaterialTheme.colors.background) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(horizontal = 16.dp),
+        if (
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
         ) {
-            LogoHeader()
-            ServerSelection(
-                showExternalConnectionError = showExternalConnectionError,
-                onConnected = { hostname ->
-                    mainViewModel.switchServer(hostname)
+            return true
+        }
+
+        val activity = context as? Activity ?: return false
+        activity.runOnUiThread {
+            activity.requestPermission(Manifest.permission.POST_NOTIFICATIONS) { }
+        }
+        return false
+    }
+
+    @JavascriptInterface
+    fun showTarsNotification(title: String, text: String, notificationId: String): Boolean {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return false
+        }
+
+        val manager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        val channelId = "tarsvideo_chat"
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    channelId,
+                    "TARSVideo",
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = "Mensagens e notificações do TARSVideo"
                 },
             )
-            StyledTextButton(
-                onClick = { activityEventHandler.emit(ActivityEvent.OpenDownloads) },
-                text = stringResource(R.string.view_downloads),
-            )
         }
-    }'''
-new_connect = f'''    androidx.compose.runtime.LaunchedEffect(Unit) {{
-        mainViewModel.switchServer("{SERVER_URL}")
-    }}
 
-    Surface(color = MaterialTheme.colors.background) {{
-        androidx.compose.foundation.layout.Spacer(
-            modifier = Modifier.fillMaxSize(),
+        val launchIntent =
+            context.packageManager.getLaunchIntentForPackage(context.packageName)
+                ?: Intent(context, MainActivity::class.java)
+
+        launchIntent.addFlags(
+            Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
         )
-    }}'''
-if old_connect not in connect:
-    raise SystemExit("ConnectScreen body pattern not found")
-write(connect_rel, connect.replace(old_connect, new_connect, 1))
 
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            0,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
-# Remove Select Server capability from the web shell.
-native_shell_rel = "app/src/main/assets/native/nativeshell.js"
-native_shell = read(native_shell_rel)
-if '    "multiserver",\n' not in native_shell:
-    raise SystemExit("nativeshell multiserver capability anchor not found")
-write(native_shell_rel, native_shell.replace('    "multiserver",\n', "", 1))
+        val safeTitle = title.trim().ifBlank { "TARSVideo" }.take(120)
+        val safeText = text.trim().take(2000)
 
+        val notification = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(R.drawable.tars_notification)
+            .setLargeIcon(BitmapFactory.decodeResource(context.resources, R.drawable.tars_icon))
+            .setContentTitle(safeTitle)
+            .setContentText(safeText.take(240))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(safeText))
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
 
-# JavaScript Injector / TARS Chat compatibility checks.
-web_utils_rel = "app/src/main/java/org/jellyfin/mobile/utils/WebViewUtils.kt"
-web_utils = read(web_utils_rel)
-for required in ("javaScriptEnabled = true", "domStorageEnabled = true"):
-    if required not in web_utils:
-        raise SystemExit(f"WebView JavaScript compatibility missing: {required}")
+        val id =
+            if (notificationId.isBlank()) {
+                (System.currentTimeMillis() and Int.MAX_VALUE.toLong()).toInt()
+            } else {
+                notificationId.hashCode() and Int.MAX_VALUE
+            }
 
-web_client_rel = "app/src/main/java/org/jellyfin/mobile/webapp/JellyfinWebViewClient.kt"
-web_client = read(web_client_rel)
-for required in (
-    'assetsPathHandler.inject("native/injectionScript.js")',
-    'path.contains("/native/")',
-):
-    if required not in web_client:
-        raise SystemExit(f"Jellyfin native web injection bridge missing: {required}")
+        manager.notify(id, notification)
+        return true
+    }
 
-webview_rel = "app/src/main/java/org/jellyfin/mobile/webapp/WebViewFragment.kt"
-webview = read(webview_rel)
-if "settings.applyDefault()" not in webview:
-    raise SystemExit("WebView settings.applyDefault missing")
-if 'loadUrl("${server.hostname.trimEnd(\'/\')}/")' not in webview:
-    raise SystemExit("WebView server loadUrl missing")
-
-# Hide/remove the Jellyfin Web bootstrap logo before the WebView is made visible.
-# This preserves the server web runtime, JavaScript Injector and TARS Chat.
-old_connected = '''                runOnUiThread {
-                    webViewBinding.loadingContainer.isVisible = false
-                    webView.fadeIn()
-                }'''
-new_connected = '''                runOnUiThread {
-                    webView.evaluateJavascript(
-                        """
-                        (() => {
-                            let style = document.getElementById('tarsvideo-hide-jellyfin-splash');
-                            if (!style) {
-                                style = document.createElement('style');
-                                style.id = 'tarsvideo-hide-jellyfin-splash';
-                                style.textContent = '.splashLogo{display:none!important;visibility:hidden!important;opacity:0!important}';
-                                (document.head || document.documentElement).appendChild(style);
-                            }
-                            document.querySelectorAll('.splashLogo').forEach((element) => element.remove());
-                        })();
-                        """.trimIndent(),
-                    ) {
-                        webViewBinding.loadingContainer.isVisible = false
-                        webView.fadeIn()
-                    }
-                }'''
-if old_connected not in webview:
-    raise SystemExit("WebView connected/fade-in anchor not found")
-webview = webview.replace(old_connected, new_connected, 1)
-
-old_listener = '''        webViewBinding!!.useDifferentServerButton.setOnClickListener {
-            webView.removeCallbacks(timeoutRunnable)
-            webView.stopLoading()
-            webViewBinding!!.loadingContainer.isVisible = false
-            onSelectServer(error = false)
-        }'''
-if old_listener not in webview:
-    raise SystemExit("useDifferentServerButton listener pattern not found")
-webview = webview.replace(
-    old_listener,
-    "        webViewBinding!!.useDifferentServerButton.isVisible = false",
-    1,
-)
-
-old_settings = "        settings.applyDefault()\n"
-new_settings = '''        // TARSVideo: keep the full server web runtime enabled so server-side
-        // JavaScript Injector scripts (including TARS Chat) run in this WebView.
-        settings.applyDefault()
 '''
-if old_settings not in webview:
-    raise SystemExit("WebView settings.applyDefault anchor not found")
-webview = webview.replace(old_settings, new_settings, 1)
-write(webview_rel, webview)
+
+anchor = '''    @JavascriptInterface
+    fun openServerSelection() {
+        emitEvent(ActivityEvent.SelectServer)
+    }
+
+'''
+if anchor not in native:
+    raise SystemExit("NativeInterface notification insertion anchor not found")
+native = native.replace(anchor, anchor + notification_methods, 1)
+write(native_rel, native)
 
 
-# TARSVideo loading overlay.
-# v0.4.1 uses the TARS artwork directly, without the old extra inset.
-fragment_rel = "app/src/main/res/layout/fragment_webview.xml"
-fragment = read(fragment_rel)
-fragment = fragment.replace(
-    'android:visibility="gone"\n        tools:visibility="visible">',
-    'android:visibility="visible"\n        tools:visibility="visible">',
-    1,
-)
-
-old_progress = '''        <com.google.android.material.progressindicator.CircularProgressIndicator
-            android:id="@+id/progress_indicator"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:indeterminate="true"
-            app:indicatorColor="@color/jellyfin_accent"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />'''
-
-new_progress = '''        <ImageView
-            android:id="@+id/progress_indicator"
-            android:layout_width="132dp"
-            android:layout_height="132dp"
-            android:contentDescription="@string/app_name"
-            android:scaleType="centerInside"
-            android:src="@drawable/tars_icon"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />'''
-
-if old_progress not in fragment:
-    raise SystemExit("WebView progress indicator pattern not found")
-fragment = fragment.replace(old_progress, new_progress, 1)
-
-fragment = fragment.replace(
-    'android:text="@string/button_use_different_server"',
-    'android:text="@string/button_use_different_server"\n            android:visibility="gone"',
-    1,
-)
-write(fragment_rel, fragment)
-
-
-# Launcher + Android splash.
-# v0.4.1:
-# - no Jellyfin/TARS logo in the Android system splash
-# - no extra 24dp inset around the launcher foreground
-# - TARS icon fills the adaptive icon area much better
+# Monochrome small icon used by Android's status bar.
 write(
-    "app/src/main/res/drawable/tars_empty_splash.xml",
+    "app/src/main/res/drawable/tars_notification.xml",
     '''<?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <size
-        android:width="1dp"
-        android:height="1dp" />
-    <solid android:color="@android:color/transparent" />
-</shape>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,3h16c1.1,0 2,0.9 2,2v11c0,1.1 -0.9,2 -2,2h-9l-5.5,3v-3H4c-1.1,0 -2,-0.9 -2,-2V5c0,-1.1 0.9,-2 2,-2zM7,9.5a1.25,1.25 0,1 0,0 2.5a1.25,1.25 0,0 0,0 -2.5zM12,9.5a1.25,1.25 0,1 0,0 2.5a1.25,1.25 0,0 0,0 -2.5zM17,9.5a1.25,1.25 0,1 0,0 2.5a1.25,1.25 0,0 0,0 -2.5z" />
+</vector>
 ''',
 )
 
+
+# ------------------------------------------------------------
+# Expose notification functions to the WebView runtime.
+# ------------------------------------------------------------
+shell_rel = "app/src/main/assets/native/nativeshell.js"
+shell = read(shell_rel)
+
+shell_anchor = '''    openClientSettings() {
+        window.NativeInterface.openClientSettings();
+    },
+
+'''
+shell_insert = '''    openClientSettings() {
+        window.NativeInterface.openClientSettings();
+    },
+
+    requestTarsNotificationPermission() {
+        return window.NativeInterface.requestTarsNotificationPermission();
+    },
+
+    showTarsNotification(title, text, notificationId) {
+        return window.NativeInterface.showTarsNotification(
+            String(title || 'TARSVideo'),
+            String(text || ''),
+            String(notificationId || '')
+        );
+    },
+
+'''
+if shell_anchor not in shell:
+    raise SystemExit("nativeshell notification anchor not found")
+shell = shell.replace(shell_anchor, shell_insert, 1)
+write(shell_rel, shell)
+
+
+# Load the TARS notification observer in the Android WebView.
+injection_rel = "app/src/main/assets/native/injectionScript.js"
+injection = read(injection_rel)
+old_scripts = '''        '/native/nativeshell.js',
+        '/native/EventEmitter.js',
+        document.currentScript.src.concat('?deferred=true&ts=', Date.now())'''
+new_scripts = '''        '/native/nativeshell.js',
+        '/native/EventEmitter.js',
+        '/native/tarsnotifications.js',
+        document.currentScript.src.concat('?deferred=true&ts=', Date.now())'''
+if old_scripts not in injection:
+    raise SystemExit("injectionScript list anchor not found")
+write(injection_rel, injection.replace(old_scripts, new_scripts, 1))
+
+
+# ------------------------------------------------------------
+# TARS Chat -> Android local notification adapter.
+# ------------------------------------------------------------
 write(
-    "app/src/main/res/values/tars_colors.xml",
-    '''<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="tars_launcher_background">#101014</color>
-</resources>
+    "app/src/main/assets/native/tarsnotifications.js",
+    r'''(() => {
+    'use strict';
+
+    if (window.__TARS_NATIVE_NOTIFICATIONS_V1__) return;
+    window.__TARS_NATIVE_NOTIFICATIONS_V1__ = true;
+
+    const PERMISSION_KEY = 'tarsvideo-native-notification-permission-v1';
+    const seenPersistent = new Set();
+    const seenMessages = new Set();
+
+    let persistentInitialized = false;
+    let observedMessages = null;
+    let messageObserver = null;
+
+    function bridge() {
+        const shell = window.NativeShell;
+        if (!shell || typeof shell.showTarsNotification !== 'function') return null;
+        return shell;
+    }
+
+    function requestPermissionOnce() {
+        const shell = bridge();
+        if (!shell || typeof shell.requestTarsNotificationPermission !== 'function') return;
+
+        try {
+            if (localStorage.getItem(PERMISSION_KEY) === '1') return;
+            localStorage.setItem(PERMISSION_KEY, '1');
+            shell.requestTarsNotificationPermission();
+        } catch (_) {
+            try { shell.requestTarsNotificationPermission(); } catch (_) {}
+        }
+    }
+
+    function shouldNotify() {
+        const chatState = window.__TARS_CHAT__?.state;
+        return document.visibilityState !== 'visible' || !chatState?.panelOpen;
+    }
+
+    function notify(title, text, id) {
+        if (!shouldNotify()) return false;
+
+        const shell = bridge();
+        if (!shell) return false;
+
+        try {
+            return shell.showTarsNotification(
+                String(title || 'TARSVideo'),
+                String(text || ''),
+                String(id || '')
+            ) === true;
+        } catch (error) {
+            console.debug('[TARSVideo] native notification failed', error);
+            return false;
+        }
+    }
+
+    function persistentFingerprint(item) {
+        return String(
+            item?.id ||
+            [
+                item?.title || '',
+                item?.text || '',
+                item?.time || ''
+            ].join('|')
+        );
+    }
+
+    function syncPersistentNotifications() {
+        const notifications = window.__TARS_CHAT__?.state?.notifications;
+        if (!Array.isArray(notifications)) return;
+
+        if (!persistentInitialized) {
+            for (const item of notifications) {
+                seenPersistent.add(persistentFingerprint(item));
+            }
+            persistentInitialized = true;
+            requestPermissionOnce();
+            return;
+        }
+
+        for (const item of notifications) {
+            const key = persistentFingerprint(item);
+            if (seenPersistent.has(key)) continue;
+
+            seenPersistent.add(key);
+
+            if (item?.read === true) continue;
+            if (String(item?.status || '').toLowerCase() === 'running') continue;
+
+            notify(
+                item?.title || 'TARSVideo',
+                item?.text || 'Você tem uma nova notificação.',
+                `persistent:${key}`
+            );
+        }
+    }
+
+    function messageFingerprint(element) {
+        const name =
+            element.querySelector('.tars-chat-message-name')?.textContent?.trim() || '';
+        const text =
+            element.querySelector('.tars-chat-message-bubble')?.textContent?.trim() || '';
+        const time =
+            element.querySelector('.tars-chat-message-time')?.textContent?.trim() || '';
+
+        return `${name}|${text}|${time}`;
+    }
+
+    function rememberExistingMessages(container) {
+        container.querySelectorAll('.tars-chat-message').forEach((element) => {
+            seenMessages.add(messageFingerprint(element));
+        });
+    }
+
+    function processMessageElement(element) {
+        if (!(element instanceof Element)) return;
+        if (!element.classList.contains('tars-chat-message')) return;
+
+        const key = messageFingerprint(element);
+        if (!key || seenMessages.has(key)) return;
+        seenMessages.add(key);
+
+        if (element.classList.contains('mine')) return;
+
+        const name =
+            element.querySelector('.tars-chat-message-name')?.textContent?.trim() || 'TARS Chat';
+        const text =
+            element.querySelector('.tars-chat-message-bubble')?.textContent?.trim() || '';
+
+        if (!text) return;
+
+        notify(
+            `TARS Chat - ${name}`,
+            text,
+            `chat:${Date.now()}:${key}`
+        );
+    }
+
+    function attachMessageObserver() {
+        const container = document.getElementById('tars-chat-messages');
+        if (!container || container === observedMessages) return;
+
+        messageObserver?.disconnect();
+        observedMessages = container;
+
+        rememberExistingMessages(container);
+
+        messageObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                    if (!(node instanceof Element)) continue;
+
+                    if (node.classList.contains('tars-chat-message')) {
+                        processMessageElement(node);
+                    }
+
+                    node.querySelectorAll?.('.tars-chat-message').forEach(
+                        processMessageElement
+                    );
+                }
+            }
+        });
+
+        messageObserver.observe(container, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    function tick() {
+        if (!bridge()) return;
+        requestPermissionOnce();
+        syncPersistentNotifications();
+        attachMessageObserver();
+    }
+
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+
+    setInterval(tick, 1000);
+    tick();
+
+    console.debug('[TARSVideo] native notifications adapter loaded');
+})();
 ''',
 )
 
-write(
-    "app/src/main/res/mipmap-anydpi-v26/tars_launcher.xml",
-    '''<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/tars_launcher_background" />
-    <foreground android:drawable="@drawable/tars_icon" />
-</adaptive-icon>
-''',
-)
 
-write(
-    "app/src/main/res/mipmap-anydpi/tars_launcher.xml",
-    '''<?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@color/tars_launcher_background" />
-    <item android:drawable="@drawable/tars_icon" />
-</layer-list>
-''',
-)
-
-manifest_rel = "app/src/main/AndroidManifest.xml"
-manifest = read(manifest_rel)
-if 'android:icon="@mipmap/ic_launcher"' not in manifest:
-    raise SystemExit("Manifest launcher icon anchor not found")
-manifest = manifest.replace(
-    'android:icon="@mipmap/ic_launcher"',
-    'android:icon="@mipmap/tars_launcher"',
-    1,
-)
-
-if 'android:roundIcon="@mipmap/ic_launcher_round"' not in manifest:
-    raise SystemExit("Manifest round launcher icon anchor not found")
-manifest = manifest.replace(
-    'android:roundIcon="@mipmap/ic_launcher_round"',
-    'android:roundIcon="@mipmap/tars_launcher"',
-    1,
-)
-write(manifest_rel, manifest)
-
-styles_rel = "app/src/main/res/values/styles.xml"
-styles = read(styles_rel)
-
-old_splash = '<item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>'
-new_splash = '<item name="windowSplashScreenAnimatedIcon">@drawable/tars_empty_splash</item>'
-if old_splash not in styles:
-    raise SystemExit("Splash icon anchor not found")
-
-styles = styles.replace(old_splash, new_splash, 1)
-write(styles_rel, styles)
-
-
-print(f"TARSVideo Android v{APP_VERSION} patch applied successfully")
-print("PLAYER=JELLYFIN_NATIVE_EXOPLAYER")
-print("JAVASCRIPT_INJECTOR_COMPAT=YES")
-print("SYSTEM_SPLASH_ICON=REMOVED")
-print("LAUNCHER_ICON_PADDING=REMOVED")
-print("CONNECT_SPINNER=REMOVED")
-print("JELLYFIN_WEB_SPLASH=HIDDEN_BEFORE_FADE_IN")
-print(f"SERVER={SERVER_URL}")
+print(f"TARSVideo Android v{APP_VERSION} incremental patch applied successfully")
+print("ANDROID_DEVICE_ID_MODE=STABLE_BASE_DEVICE_ID")
+print("SYNCPLAY_DUPLICATE_SESSION_FIX=ENABLED")
+print("TARS_NATIVE_NOTIFICATION_BRIDGE=ENABLED")
+print("TARS_CHAT_NATIVE_NOTIFICATION_ADAPTER=ENABLED")
+print("NATIVE_NOTIFICATION_SCOPE=APP_PROCESS_ALIVE")
