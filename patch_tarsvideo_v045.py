@@ -379,9 +379,42 @@ new = '''    fun register(
             .getSharedPreferences(PUSH_PREFS, Context.MODE_PRIVATE)
             .getLong(REGISTERED_AT, 0L)
     }'''
-if push.count(old) != 1:
-    raise SystemExit("TarsPushManager registration block anchor mismatch")
-push = push.replace(old, new, 1)
+register_start_marker = "    fun register(\n"
+register_end_marker = "    fun showNotification(\n"
+
+register_start_count = push.count(register_start_marker)
+register_end_count = push.count(register_end_marker)
+
+if register_start_count != 1:
+    raise SystemExit(
+        "TarsPushManager register start marker mismatch: "
+        f"{register_start_count}"
+    )
+
+if register_end_count != 1:
+    raise SystemExit(
+        "TarsPushManager register end marker mismatch: "
+        f"{register_end_count}"
+    )
+
+register_start = push.index(register_start_marker)
+register_end = push.index(
+    register_end_marker,
+    register_start,
+)
+
+if register_end <= register_start:
+    raise SystemExit(
+        "TarsPushManager registration boundaries invalid"
+    )
+
+push = (
+    push[:register_start]
+    + new
+    + "\n\n"
+    + push[register_end:]
+)
+
 write(push_rel, push)
 
 updater_rel = "app/src/main/java/org/jellyfin/mobile/tars/TarsUpdater.kt"
