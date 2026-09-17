@@ -498,6 +498,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -518,6 +519,7 @@ object TarsUpdater {{
     private const val LAST_CHECK = "last_check"
     private const val CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L
     private const val PENDING_JSON = "pending_update"
+    private const val EXPECTED_SIGNER_SHA256 = "250a90fd90adb0245f89e45d64ce125ebec58ed1cff17d96f329dfeabeac53fc"
 
     data class UpdateInfo(
         val versionName: String,
@@ -734,14 +736,50 @@ object TarsUpdater {{
                 throw IllegalStateException("sha256_mismatch")
             }}
 
+            val archiveFlags = if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+            ) {{
+                PackageManager.GET_SIGNING_CERTIFICATES
+            }} else {{
+                @Suppress("DEPRECATION")
+                PackageManager.GET_SIGNATURES
+            }}
+
             val packageInfo = activity.packageManager.getPackageArchiveInfo(
                 apkFile.absolutePath,
-                0,
+                archiveFlags,
             ) ?: throw IllegalStateException("invalid_apk")
 
             if (packageInfo.packageName != BuildConfig.APPLICATION_ID) {{
                 apkFile.delete()
                 throw IllegalStateException("package_mismatch")
+            }}
+
+            val archiveSigners = if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+            ) {{
+                val signingInfo = packageInfo.signingInfo
+                    ?: throw IllegalStateException("missing_signing_info")
+
+                signingInfo.apkContentsSigners
+            }} else {{
+                @Suppress("DEPRECATION")
+                packageInfo.signatures ?: emptyArray()
+            }}
+
+            if (archiveSigners.isEmpty()) {{
+                apkFile.delete()
+                throw IllegalStateException("missing_signer")
+            }}
+
+            val signerMatches = archiveSigners.any {{ signer ->
+                sha256Bytes(signer.toByteArray())
+                    .equals(EXPECTED_SIGNER_SHA256, ignoreCase = true)
+            }}
+
+            if (!signerMatches) {{
+                apkFile.delete()
+                throw IllegalStateException("signer_mismatch")
             }}
 
             val archiveVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {{
@@ -781,6 +819,16 @@ object TarsUpdater {{
         }}
 
         activity.startActivity(intent)
+    }}
+
+    private fun sha256Bytes(value: ByteArray): String {{
+        val digest = MessageDigest
+            .getInstance("SHA-256")
+            .digest(value)
+
+        return digest.joinToString("") {{ byte ->
+            "%02x".format(byte)
+        }}
     }}
 
     private fun sha256(file: File): String {{
@@ -834,6 +882,10 @@ checks = {
     "app/src/main/java/org/jellyfin/mobile/tars/TarsUpdater.kt": [
         UPDATE_MANIFEST_URL,
         'getPackageArchiveInfo',
+        'EXPECTED_SIGNER_SHA256',
+        '250a90fd90adb0245f89e45d64ce125ebec58ed1cff17d96f329dfeabeac53fc',
+        'GET_SIGNING_CERTIFICATES',
+        'signer_mismatch',
         'MessageDigest.getInstance("SHA-256")',
     ],
 }
