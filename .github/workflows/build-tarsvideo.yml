@@ -1,12 +1,12 @@
-name: Build TARSVideo Android v0.4.4 Release
+name: Build TARSVideo Android v0.4.5 Release
 
 on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: Publish GitHub Release v0.4.4
+        description: Publish GitHub Release v0.4.5
         required: true
-        default: true
+        default: false
         type: boolean
 
   push:
@@ -17,15 +17,15 @@ permissions:
   contents: write
 
 concurrency:
-  group: tarsvideo-android-v0.4.4
+  group: tarsvideo-android-v0.4.5
   cancel-in-progress: false
 
 env:
-  APP_VERSION: "0.4.4"
-  JELLYFIN_VERSION: "0.4.4"
+  APP_VERSION: "0.4.5"
+  JELLYFIN_VERSION: "0.4.5"
 
   EXPECTED_PACKAGE: "tars.video"
-  EXPECTED_VERSION_CODE: "40499"
+  EXPECTED_VERSION_CODE: "40599"
 
   EXPECTED_CERT_SHA256: >-
     250a90fd90adb0245f89e45d64ce125ebec58ed1cff17d96f329dfeabeac53fc
@@ -65,11 +65,13 @@ jobs:
 
           test -f patch_tarsvideo.py
           test -f patch_tarsvideo_v044.py
+          test -f patch_tarsvideo_v045.py
           test -f google-services.json
           test -f tars_icon.png
 
           python3 -m py_compile patch_tarsvideo.py
           python3 -m py_compile patch_tarsvideo_v044.py
+          python3 -m py_compile patch_tarsvideo_v045.py
 
           python3 - <<'PY'
           import json
@@ -116,7 +118,7 @@ jobs:
           python3 -m py_compile \
             patch_tarsvideo_base_v042.py
 
-      - name: Apply TARSVideo v0.4.4 patch chain
+      - name: Apply TARSVideo v0.4.5 patch chain
         shell: bash
         run: |
           set -e
@@ -143,6 +145,11 @@ jobs:
             patch_tarsvideo_v044.py \
             upstream
 
+          echo '===== APPLY v0.4.5 ====='
+          python3 \
+            patch_tarsvideo_v045.py \
+            upstream
+
           cp \
             google-services.json \
             upstream/app/google-services.json
@@ -159,7 +166,7 @@ jobs:
             upstream/app/build.gradle.kts
 
           grep -n \
-            'base.archivesName.set("TARSVideo-v0.4.4")' \
+            'base.archivesName.set("TARSVideo-v0.4.5")' \
             upstream/app/build.gradle.kts
 
           grep -n \
@@ -177,6 +184,34 @@ jobs:
           grep -n \
             '/tars-chat/admin/push/register' \
             upstream/app/src/main/java/org/jellyfin/mobile/tars/TarsPushManager.kt
+
+          grep -n \
+            'MAX_REGISTER_ATTEMPTS = 4' \
+            upstream/app/src/main/java/org/jellyfin/mobile/tars/TarsPushManager.kt
+
+          grep -n \
+            'TOKEN_REQUEST_TIMEOUT_MS = 12000L' \
+            upstream/app/src/main/java/org/jellyfin/mobile/tars/TarsPushManager.kt
+
+          grep -n \
+            'registration retry scheduled' \
+            upstream/app/src/main/java/org/jellyfin/mobile/tars/TarsPushManager.kt
+
+          grep -n \
+            'loadSavedServerUser()' \
+            upstream/app/src/main/java/org/jellyfin/mobile/MainViewModel.kt
+
+          grep -n \
+            'title = "Sobre o App"' \
+            upstream/app/src/main/java/org/jellyfin/mobile/settings/SettingsFragment.kt
+
+          grep -n \
+            'title = "Procurar atualizações"' \
+            upstream/app/src/main/java/org/jellyfin/mobile/settings/SettingsFragment.kt
+
+          grep -n \
+            'TARSVideo atualizado' \
+            upstream/app/src/main/java/org/jellyfin/mobile/tars/TarsUpdater.kt
 
           grep -n \
             'deviceInfo = baseDeviceInfo' \
@@ -230,6 +265,9 @@ jobs:
           echo 'CHAT_MESSAGE_PUSH=NO'
           echo 'SYNCPLAY_DEVICE_ID_FIX=YES'
           echo 'IN_APP_UPDATER=YES'
+          echo 'FCM_SAVED_SESSION_RETRY=YES'
+          echo 'ABOUT_APP_SCREEN=YES'
+          echo 'MANUAL_UPDATE_CHECK=YES'
 
       - name: Prepare release signing key
         shell: bash
@@ -443,10 +481,9 @@ jobs:
               ),
               "sha256": sha256,
               "releaseNotes": (
-                  "Notificações administrativas FCM, "
-                  "correção SyncPlay/DeviceId, "
-                  "pacote permanente tars.video "
-                  "e atualizador interno."
+                  "Retry e recuperação do push administrativo FCM, "
+                  "tela Sobre o App, verificação manual de atualizações, "
+                  "SyncPlay/DeviceId estável e pacote tars.video."
               ),
           }
 
@@ -479,10 +516,10 @@ jobs:
       - name: Upload verified APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.4.4-Signed-Release
+          name: TARSVideo-Android-v0.4.5-Signed-Release
           path: |
-            dist/TARSVideo-v0.4.4.apk
-            dist/TARSVideo-v0.4.4.apk.sha256
+            dist/TARSVideo-v0.4.5.apk
+            dist/TARSVideo-v0.4.5.apk.sha256
             dist/update.json
             dist/apksigner.txt
           retention-days: 30
@@ -519,7 +556,7 @@ jobs:
                 "$TAG" \
                 --title "TARSVideo v${APP_VERSION}" \
                 --notes \
-                  "FCM administrativo, SyncPlay/DeviceId estável, pacote tars.video e atualizador interno."
+                  "Retry FCM e recuperação de sessão, Sobre o App, verificação manual de updates, SyncPlay/DeviceId estável."
 
           else
 
@@ -531,7 +568,7 @@ jobs:
                 --target "$GITHUB_SHA" \
                 --title "TARSVideo v${APP_VERSION}" \
                 --notes \
-                  "FCM administrativo, SyncPlay/DeviceId estável, pacote tars.video e atualizador interno."
+                  "Retry FCM e recuperação de sessão, Sobre o App, verificação manual de updates, SyncPlay/DeviceId estável."
 
           fi
 
