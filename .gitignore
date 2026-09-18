@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local upstream checkout used for patch testing
+upstream/
+
+# Generated historical/base patch
+patch_tarsvideo_base_v042.py
+
+# Android / Gradle
+.gradle/
+build/
+**/build/
+local.properties
+.idea/
+*.iml
+
+# Build output
+dist/
+artifacts/
+
+# Signing material
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# Local secrets
+.env
+.env.*
+firebase-admin.json
+
+# OS / editors
+.DS_Store
+Thumbs.db
+*.swp
