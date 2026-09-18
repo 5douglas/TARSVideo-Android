@@ -1,10 +1,10 @@
-name: Build TARSVideo Android v0.4.7 Release
+name: Build TARSVideo Android v0.4.8 Release
 
 on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: Publish GitHub Release v0.4.7
+        description: Publish GitHub Release v0.4.8
         required: true
         default: false
         type: boolean
@@ -17,15 +17,15 @@ permissions:
   contents: write
 
 concurrency:
-  group: tarsvideo-android-v0.4.7
+  group: tarsvideo-android-v0.4.8
   cancel-in-progress: false
 
 env:
-  APP_VERSION: "0.4.7"
-  JELLYFIN_VERSION: "0.4.7"
+  APP_VERSION: "0.4.8"
+  JELLYFIN_VERSION: "0.4.8"
 
   EXPECTED_PACKAGE: "tars.video"
-  EXPECTED_VERSION_CODE: "40799"
+  EXPECTED_VERSION_CODE: "40899"
 
   EXPECTED_CERT_SHA256: >-
     250a90fd90adb0245f89e45d64ce125ebec58ed1cff17d96f329dfeabeac53fc
@@ -68,6 +68,7 @@ jobs:
           test -f patch_tarsvideo_v045.py
           test -f patch_tarsvideo_v046.py
           test -f patch_tarsvideo_v047.py
+          test -f patch_tarsvideo_v048.py
           test -f google-services.json
           test -f tars_icon.png
 
@@ -76,6 +77,7 @@ jobs:
           python3 -m py_compile patch_tarsvideo_v045.py
           python3 -m py_compile patch_tarsvideo_v046.py
           python3 -m py_compile patch_tarsvideo_v047.py
+          python3 -m py_compile patch_tarsvideo_v048.py
 
           python3 - <<'PY'
           import json
@@ -122,7 +124,7 @@ jobs:
           python3 -m py_compile \
             patch_tarsvideo_base_v042.py
 
-      - name: Apply TARSVideo v0.4.7 patch chain
+      - name: Apply TARSVideo v0.4.8 patch chain
         shell: bash
         run: |
           set -e
@@ -164,6 +166,11 @@ jobs:
             patch_tarsvideo_v047.py \
             upstream
 
+          echo '===== APPLY v0.4.8 ====='
+          python3 \
+            patch_tarsvideo_v048.py \
+            upstream
+
           cp \
             google-services.json \
             upstream/app/google-services.json
@@ -180,7 +187,7 @@ jobs:
             upstream/app/build.gradle.kts
 
           grep -n \
-            'base.archivesName.set("TARSVideo-v0.4.7")' \
+            'base.archivesName.set("TARSVideo-v0.4.8")' \
             upstream/app/build.gradle.kts
 
           grep -n \
@@ -617,10 +624,10 @@ jobs:
       - name: Upload verified APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TARSVideo-Android-v0.4.7-Signed-Release
+          name: TARSVideo-Android-v0.4.8-Signed-Release
           path: |
-            dist/TARSVideo-v0.4.7.apk
-            dist/TARSVideo-v0.4.7.apk.sha256
+            dist/TARSVideo-v0.4.8.apk
+            dist/TARSVideo-v0.4.8.apk.sha256
             dist/update.json
             dist/apksigner.txt
           retention-days: 30
