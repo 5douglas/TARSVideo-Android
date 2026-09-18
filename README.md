@@ -8,7 +8,7 @@
 Custom Android client built on top of Jellyfin Android using a reproducible patch-based build pipeline.
 </p>
 
-> 🇧🇷 Documentação em português será mantida em `docs/README.pt-BR.md`.
+> 🇧🇷 [Documentação em Português (Brasil)](docs/README.pt-BR.md)
 
 ## About
 
